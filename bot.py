@@ -1,4 +1,4 @@
-import os, logging, asyncio, re, time, aiohttp, io, subprocess, json
+import os, logging, asyncio, re, time, aiohttp, io, subprocess, json, base64
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
 from telethon.tl.types import Channel, Chat, User
@@ -86,6 +86,14 @@ IA_CONFIG = {
     "img_borda_ativo":       False,
     "img_borda_cor":         "#000000",
     "img_borda_espessura":   5,
+    # Filtro condicional por conteúdo de imagem via IA (Vision)
+    "img_analise_ativo":     False,   # True = analisa antes de reencaminhar
+    "img_analise_modo":      "incluir",  # incluir | excluir
+    # incluir = só encaminha SE a IA confirmar o conteúdo
+    # excluir = só encaminha SE a IA NÃO detectar o conteúdo
+    "img_analise_prompt":    "",       # o que o usuário quer detectar (ex: "banner de futebol")
+    "img_analise_confianca": 70,       # limiar 0-100: % de certeza exigida para considerar positivo
+    "img_analise_acoes":     [],       # ações extras se detectado: ["aplicar_efeitos", "adicionar_texto_fixo"]
 }
 
 PROMPTS_PADRAO = {
@@ -399,6 +407,96 @@ def processar_imagem(img_bytes: bytes):
 
 
 # ════════════════════════════════════════════════════════════════════════════
+#  FILTRO CONDICIONAL POR CONTEÚDO DE IMAGEM — Vision IA
+# ════════════════════════════════════════════════════════════════════════════
+
+async def analisar_imagem_ia(img_bytes: bytes) -> tuple[bool, int, str]:
+    """
+    Analisa o conteúdo da imagem usando Vision (OpenAI gpt-4o ou Gemini).
+
+    Retorna: (detectado: bool, confianca: int 0-100, descricao: str)
+      - detectado = True se o prompt do usuário foi identificado na imagem
+      - confianca = percentual estimado pela IA (extraído da resposta ou calculado por presença/ausência)
+      - descricao = texto curto da IA explicando o que encontrou
+    """
+    prompt_busca = IA_CONFIG.get("img_analise_prompt", "").strip()
+    if not prompt_busca:
+        return False, 0, "Nenhum conteúdo definido para análise."
+
+    provedor  = IA_CONFIG.get("provedor", "openai")
+    limiar    = int(IA_CONFIG.get("img_analise_confianca", 70))
+    img_b64   = base64.b64encode(img_bytes).decode()
+
+    system_prompt = (
+        "Você é um analisador de imagens preciso. "
+        "Responda SEMPRE em JSON com o formato exato: "
+        '{"detectado": true/false, "confianca": 0-100, "descricao": "texto curto"}. '
+        "Nada além do JSON."
+    )
+    user_prompt = (
+        f'Analise a imagem e diga se ela contém: "{prompt_busca}". '
+        "Retorne o JSON conforme instruído."
+    )
+
+    try:
+        import json as _json
+
+        if provedor == "openai":
+            api_key = IA_CONFIG.get("api_key_oai", "")
+            if not api_key:
+                return False, 0, "API Key OpenAI não configurada."
+            payload = {
+                "model": "gpt-4o",
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": [
+                        {"type": "text",       "text": user_prompt},
+                        {"type": "image_url",  "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}},
+                    ]},
+                ],
+                "max_tokens": 120,
+                "response_format": {"type": "json_object"},
+            }
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            async with aiohttp.ClientSession() as s:
+                async with s.post("https://api.openai.com/v1/chat/completions",
+                                  json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=25)) as r:
+                    data = await r.json()
+            raw = data["choices"][0]["message"]["content"]
+
+        else:  # gemini
+            api_key = IA_CONFIG.get("api_key_gem", "")
+            if not api_key:
+                return False, 0, "API Key Gemini não configurada."
+            modelo = IA_CONFIG.get("modelo_gem", "gemini-1.5-flash")
+            url    = ("https://generativelanguage.googleapis.com/v1beta/models/"
+                      + modelo + ":generateContent?key=" + api_key)
+            payload = {
+                "contents": [{"parts": [
+                    {"text": system_prompt + "\n\n" + user_prompt},
+                    {"inline_data": {"mime_type": "image/jpeg", "data": img_b64}},
+                ]}],
+                "generationConfig": {"maxOutputTokens": 120},
+            }
+            async with aiohttp.ClientSession() as s:
+                async with s.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=25)) as r:
+                    data = await r.json()
+            raw = data["candidates"][0]["content"]["parts"][0]["text"]
+
+        # Limpar markdown code blocks caso a IA os adicione
+        raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+        resultado = _json.loads(raw)
+        detectado  = bool(resultado.get("detectado", False))
+        confianca  = int(resultado.get("confianca", 50))
+        descricao  = str(resultado.get("descricao", ""))[:200]
+        return detectado, confianca, descricao
+
+    except Exception as e:
+        logger.error("[VISION] Erro na análise: %s", e)
+        return False, 0, f"Erro: {e}"
+
+
+# ════════════════════════════════════════════════════════════════════════════
 #  RESELLER ADMIN — Deploy e Gerenciamento de Bots Filhos
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -579,6 +677,29 @@ def ia_img_efeitos_texto():
     ])
 
 
+def ia_img_analise_texto():
+    ativo     = IA_CONFIG.get("img_analise_ativo", False)
+    modo      = IA_CONFIG.get("img_analise_modo", "incluir")
+    prompt    = IA_CONFIG.get("img_analise_prompt", "") or "nenhum"
+    confianca = IA_CONFIG.get("img_analise_confianca", 70)
+    modo_lbl  = "Só encaminha SE detectar" if modo == "incluir" else "Só encaminha SE NÃO detectar"
+    return "\n".join([
+        "🔎 FILTRO POR CONTEÚDO", "=" * 30,
+        "Estado    : " + ("ATIVO" if ativo else "INATIVO"),
+        "Modo      : " + modo_lbl,
+        "Detectar  : " + (prompt[:60] + "..." if len(prompt) > 60 else prompt),
+        "Confiança : " + str(confianca) + "% mínimo",
+        "=" * 30,
+        "Provedor Vision: " + IA_CONFIG.get("provedor","openai").upper(),
+        "(usa a mesma API Key configurada na IA Texto)",
+        "",
+        "Exemplo de uso:",
+        '  Detectar = "banner de futebol"',
+        '  Modo     = Só encaminha SE detectar',
+        "  Bot vai encaminhar apenas fotos com banners de futebol.",
+    ])
+
+
 def admin_txt():
     total = len(RESELLER_BOTS)
     ativos = sum(1 for b in RESELLER_BOTS.values() if b.get("ativo", False))
@@ -700,8 +821,27 @@ def kb_ia_img():
          Button.inline(E_MAIS + " Opac: "    + str(IA_CONFIG["img_opacidade"])+ "%", b"img_opacidade")],
         [Button.inline(E_CAM    + " Testar com foto",  b"img_testar"),
          Button.inline(E_LIMPAR + " Remover logo",     b"img_rm_logo")],
-        [Button.inline("🎨 Efeitos", b"ia_img_efeitos")],
+        [Button.inline("🎨 Efeitos", b"ia_img_efeitos"),
+         Button.inline("🔎 Filtro por Conteúdo", b"ia_img_analise")],
         [Button.inline(E_VOLTAR + " Voltar", b"m_ia")],
+    ]
+
+
+def kb_ia_img_analise():
+    ativo  = IA_CONFIG.get("img_analise_ativo", False)
+    modo   = IA_CONFIG.get("img_analise_modo", "incluir")
+    conf   = IA_CONFIG.get("img_analise_confianca", 70)
+    lbl_at = ("✅ Filtro: ATIVO" if ativo else "⛔ Filtro: INATIVO")
+    lbl_mo_inc = (E_OK + " Só INCLUIR") if modo == "incluir" else "Só INCLUIR"
+    lbl_mo_exc = (E_OK + " Só EXCLUIR") if modo == "excluir" else "Só EXCLUIR"
+    return [
+        [Button.inline(lbl_at, b"imgan_toggle")],
+        [Button.inline("📝 Definir o que detectar", b"imgan_prompt")],
+        [Button.inline(lbl_mo_inc, b"imgan_modo|incluir"),
+         Button.inline(lbl_mo_exc, b"imgan_modo|excluir")],
+        [Button.inline("🎯 Confiança mínima: " + str(conf) + "%", b"imgan_confianca")],
+        [Button.inline("🧪 Testar com foto", b"imgan_testar")],
+        [Button.inline(E_VOLTAR + " Voltar", b"ia_img_menu")],
     ]
 
 
@@ -1356,6 +1496,50 @@ async def entrada_usuario(ev):
             await ev.respond(E_OK+" Espessura: "+txt+"px", buttons=kb_ia_img_efeitos())
         else:
             await ev.respond("Digite 1-100.")
+    # ── Filtro por Conteúdo (Vision): estados de entrada ────────────────
+    elif acao == "imgan_prompt":
+        IA_CONFIG["img_analise_prompt"] = txt.strip()
+        await ev.respond(
+            E_OK + " O filtro vai detectar: \"" + txt.strip() + "\"",
+            buttons=kb_ia_img_analise()
+        )
+    elif acao == "imgan_confianca":
+        if txt.isdigit() and 0 <= int(txt) <= 100:
+            IA_CONFIG["img_analise_confianca"] = int(txt)
+            await ev.respond(E_OK + " Confiança mínima: " + txt + "%", buttons=kb_ia_img_analise())
+        else:
+            await ev.respond("Digite um número entre 0 e 100.")
+    elif acao == "imgan_testar":
+        if ev.photo or ev.document:
+            try:
+                msg_p = await ev.respond("🔍 Analisando imagem...")
+                _bytes = await ev.download_media(bytes)
+                detectado, confianca, descricao = await analisar_imagem_ia(_bytes)
+                limiar = int(IA_CONFIG.get("img_analise_confianca", 70))
+                modo   = IA_CONFIG.get("img_analise_modo", "incluir")
+                positivo = detectado and confianca >= limiar
+                if modo == "incluir":
+                    resultado = "ENCAMINHARIA" if positivo else "DESCARTARIA"
+                else:
+                    resultado = "DESCARTARIA" if positivo else "ENCAMINHARIA"
+                ico = "✅" if resultado == "ENCAMINHARIA" else "❌"
+                linhas = [
+                    ico + " Resultado: " + resultado,
+                    "",
+                    "Detectado  : " + ("SIM" if detectado else "NÃO"),
+                    "Confiança  : " + str(confianca) + "% (limiar: " + str(limiar) + "%)",
+                    "Modo       : " + ("só incluir" if modo == "incluir" else "só excluir"),
+                    "Descrição  : " + descricao,
+                    "",
+                    "Filtro atv : " + ("SIM" if IA_CONFIG.get("img_analise_ativo") else "NÃO"),
+                    "Detectar   : " + (IA_CONFIG.get("img_analise_prompt","") or "nenhum"),
+                ]
+                await msg_p.edit("\n".join(linhas), buttons=kb_ia_img_analise())
+            except Exception as e:
+                await ev.respond("❌ Erro ao testar: " + str(e))
+        else:
+            AGUARDANDO[uid] = "imgan_testar"
+            await ev.respond("Envie uma foto para testar.")
     # ── Admin: estados de criação de bot filho ────────────────────────────
     elif acao == "adm_nome":
         nome_bot = txt.strip().replace(" ", "_")
@@ -1524,6 +1708,29 @@ async def callback(ev):
     elif d == b"img_borda_espessura":
         AGUARDANDO[uid] = "img_borda_espessura"
         await ev.answer("Espessura da borda px (1-100). Atual: " + str(IA_CONFIG.get("img_borda_espessura",5)), alert=True)
+
+    # ── Filtro por Conteúdo de Imagem (Vision) ──────────────────────────────
+    elif d == b"ia_img_analise":
+        await ev.edit(ia_img_analise_texto(), buttons=kb_ia_img_analise())
+    elif d == b"imgan_toggle":
+        IA_CONFIG["img_analise_ativo"] = not IA_CONFIG.get("img_analise_ativo", False)
+        lbl = "ATIVO" if IA_CONFIG["img_analise_ativo"] else "INATIVO"
+        await ev.edit(ia_img_analise_texto(), buttons=kb_ia_img_analise())
+        await ev.answer("Filtro por conteúdo: " + lbl, alert=True)
+    elif d == b"imgan_prompt":
+        AGUARDANDO[uid] = "imgan_prompt"
+        atual = IA_CONFIG.get("img_analise_prompt","") or "nenhum"
+        await ev.answer("Digite o que a IA deve detectar na imagem.\nAtual: " + atual[:60], alert=True)
+    elif d.startswith(b"imgan_modo|"):
+        IA_CONFIG["img_analise_modo"] = d.decode().split("|")[1]
+        await ev.edit(ia_img_analise_texto(), buttons=kb_ia_img_analise())
+        await ev.answer("Modo: " + IA_CONFIG["img_analise_modo"])
+    elif d == b"imgan_confianca":
+        AGUARDANDO[uid] = "imgan_confianca"
+        await ev.answer("Confiança mínima (0-100). Atual: " + str(IA_CONFIG.get("img_analise_confianca",70)) + "%", alert=True)
+    elif d == b"imgan_testar":
+        AGUARDANDO[uid] = "imgan_testar"
+        await ev.answer("🧪 Envie uma foto para testar o filtro agora!", alert=True)
 
     # ── Admin de Revenda ────────────────────────────────────────────────────
     elif d == b"adm_menu":
@@ -1811,6 +2018,34 @@ async def handler(event):
         # IA imagem
         img_processada = None
         ia_img_ok      = False
+        if event.message.photo:
+            # ── Filtro condicional por conteúdo (Vision) ─────────────────────────
+            analise_ativo = IA_CONFIG.get("img_analise_ativo", False)
+            if analise_ativo and IA_CONFIG.get("img_analise_prompt", "").strip():
+                try:
+                    _img_raw = await event.download_media(bytes)
+                    detectado, confianca, descricao = await analisar_imagem_ia(_img_raw)
+                    limiar = int(IA_CONFIG.get("img_analise_confianca", 70))
+                    modo_analise = IA_CONFIG.get("img_analise_modo", "incluir")
+                    positivo = detectado and confianca >= limiar
+                    # incluir = passa só se detectado; excluir = passa só se NÃO detectado
+                    if modo_analise == "incluir" and not positivo:
+                        logger.info("[VISION] Imagem descartada (não detectado '%s' conf=%d%%) — %s",
+                                    IA_CONFIG['img_analise_prompt'], confianca, descricao)
+                        return
+                    if modo_analise == "excluir" and positivo:
+                        logger.info("[VISION] Imagem descartada (detectado '%s' conf=%d%%) — %s",
+                                    IA_CONFIG['img_analise_prompt'], confianca, descricao)
+                        return
+                    logger.info("[VISION] Imagem aprovada conf=%d%% — %s", confianca, descricao)
+                    # reutilizar bytes já baixados abaixo
+                    _vision_bytes = _img_raw
+                except Exception as e:
+                    logger.error("[VISION] Erro na análise condicional: %s", e)
+                    _vision_bytes = None
+            else:
+                _vision_bytes = None
+
         if IA_CONFIG["img_ativo"] and event.message.photo:
             tem_efeito = (
                 IA_CONFIG.get("img_logo") or
@@ -1820,7 +2055,8 @@ async def handler(event):
             )
             if tem_efeito:
                 try:
-                    img_bytes      = await event.download_media(bytes)
+                    # reaproveit bytes da análise Vision se já baixados
+                    img_bytes      = _vision_bytes if _vision_bytes else await event.download_media(bytes)
                     img_processada = processar_imagem(img_bytes)
                     if img_processada: ia_img_ok = True
                 except Exception as e:
