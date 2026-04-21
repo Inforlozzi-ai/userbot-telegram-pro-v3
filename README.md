@@ -62,7 +62,7 @@ cd ~ && rm -rf userbot-telegram-pro-v3 && git clone https://github.com/Inforlozz
 Ou se já tem a pasta:
 
 ```bash
-cd ~/userbot-telegram-pro && sudo bash install.sh
+cd ~/userbot-telegram-pro-v3 && sudo bash install.sh
 ```
 
 ### O que acontece durante a instalação
