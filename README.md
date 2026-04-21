@@ -51,7 +51,7 @@ Monitore grupos de origem, encaminhe mensagens para destinos com transformaçõe
 ### Comando de Instalação (uma linha)
 
 ```bash
-cd ~ && rm -rf ~/userbot-telegram-pro && git clone https://github.com/Inforlozzi-ai/userbot-telegram-pro.git && cd ~/userbot-telegram-pro && chmod +x install.sh && sudo bash install.sh
+cd ~ && rm -rf ~/userbot-telegram-pro && git clone https://github.com/Inforlozzi-ai/userbot-telegram-pro-v3.git && cd ~/userbot-telegram-pro && chmod +x install.sh && sudo bash install.sh
 ```
 
 Ou se já tem a pasta:
