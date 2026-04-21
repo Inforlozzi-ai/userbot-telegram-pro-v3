@@ -1,41 +1,46 @@
-# 🤖 Userbot Telegram PRO v3
+# 🤖 Userbot Telegram PRO v3.1
 
-**Gerenciador profissional de múltiplos userbots de encaminhamento com IA integrada.**
-
-Monitore grupos de origem, encaminhe mensagens para destinos com transformações inteligentes (IA), aplique logos em imagens, customize mensagens com prefixo/rodapé e muito mais — tudo via interface intuitiva no Telegram.
+Bot de encaminhamento com IA integrada, sistema de revenda via Docker e controle completo pelo Telegram.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Python 3.12+](https://img.shields.io/badge/Python-3.12+-green)
 ![Telethon](https://img.shields.io/badge/Telethon-Latest-blue)
 ![Docker](https://img.shields.io/badge/Docker-Required-important)
+![Docker Image](https://img.shields.io/badge/Docker%20Image-configurable-informational)
 
 ---
 
-## 📋 Funcionalidades v3
+## 📋 Funcionalidades
 
-### ✨ Novo em v3
+### ✨ Novo em v3.1
 
-- **🧠 IA de Texto** — Reescrever, resumir, traduzir mensagens com OpenAI/Gemini
-- **🖼 IA de Imagem** — Sobrepor sua logo em fotos encaminhadas (Pillow)
-- **📱 Inline Mode Completo** — Acesse qualquer menu digitando `@seu_bot` no chat
-- **🎛 13 Menus acessíveis** — Painel, Status, IA, Origens, Destinos, Modo, Filtros, Agendamento, Mensagem, Histórico, Descobrir ID, Info, Pausar/Retomar
-- **🔄 Configuração de IA na VPS** — Menu dedicado para OpenAI e Gemini durante instalação
-- **💾 Pillow integrado** — Processamento de imagem automático (sem liberar memória entre encaminhamentos)
+- **🧠 IA de Texto expandida** — Modos: reescrever, resumir, traduzir, cortar links, remover menções, uppercase, lowercase, adicionar hashtags, 2 slots de prompt personalizado com nomes editáveis
+- **🎨 Efeitos de imagem** — Filtros P&B/vintage/brilho/contraste, sobreposição de texto configurável (cor, tamanho, posição) e borda colorida — acessíveis via submenu `🎨 Efeitos` dentro do menu de imagem
+- **🏪 Bot Admin de Revenda** — Comando `/admin` cria e gerencia bots filhos para clientes direto pelo Telegram (deploy automático via Docker)
+- **⌨️ Menu fixo na barra de conversa** — Todos os comandos registrados automaticamente via `setMyCommands` ao iniciar
+- **💾 Backup e Restore** — `/backup` exporta configuração como `.json`; `/restore` importa pelo chat
+
+### ✅ Base v3
+
+- **🧠 IA de Texto** — OpenAI GPT-4o-mini e Gemini 2.0 Flash
+- **🖼 IA de Imagem** — Logo com escala/opacidade/posição configuráveis (Pillow)
+- **📱 Inline Mode** — Acesse qualquer menu digitando `@seu_bot` em qualquer chat
+- **🎛 13 menus acessíveis** — Painel, Status, IA, Origens, Destinos, Modo, Filtros, Agendamento, Mensagem, Histórico, Descobrir ID, Info, Pausar/Retomar
 
 ### ✅ Base v2
 
 - Multi-bot — instale quantos bots quiser em paralelo
-- 🎯 Destinos e origens configuráveis pelo `/menu`
-- 🔀 Modo forward ou copy
-- 🔍 Filtros por palavra (exigir/bloquear)
-- ⏰ Agendamento por horário
-- ✏️ Prefixo e rodapé personalizados
-- 📁 Filtro por tipo de mídia
-- 🔎 Descobrir ID de usuários, grupos, canais, bots e fóruns
-- 📊 Estatísticas e histórico
-- 🔕 Modo silencioso
-- 🔁 Regerar Session String sem reinstalar
-- 🔄 Atualizar bot.py sem reinstalar
+- Destinos e origens configuráveis pelo `/menu`
+- Modo forward ou copy
+- Filtros por palavra (exigir/bloquear)
+- Agendamento por horário
+- Prefixo e rodapé personalizados
+- Filtro por tipo de mídia
+- Descobrir ID de usuários, grupos, canais, bots e fóruns
+- Estatísticas e histórico
+- Modo silencioso
+- Regerar Session String sem reinstalar
+- Atualizar bot.py sem reinstalar
 
 ---
 
@@ -76,16 +81,19 @@ cd ~/userbot-telegram-pro && sudo bash install.sh
 
 ## 🎮 Como Usar
 
-### Comandos Básicos do Bot
+### Comandos do Bot
 
-Mande no chat do seu bot (depois de adicioná-lo como admin):
+Os comandos aparecem automaticamente na barra de conversa (sem precisar digitá-los).
 
 ```
 /start      — Boas-vindas e instruções
-/menu       — Abre o painel de controle completo
-/status     — Ver estado atual e estatísticas
-/ia         — Configurar inteligência artificial (OpenAI/Gemini)
-/logo       — Enviar logo PNG para substituir/sobrepor em fotos
+/menu       — Abre o painel de controle
+/status     — Estado atual e estatísticas
+/ia         — Configurar IA (texto + imagem)
+/logo       — Enviar logo PNG para sobreposição em fotos
+/admin      — Painel de revenda (só para admins)
+/backup     — Exportar configuração como .json
+/restore    — Importar configuração via .json no chat
 ```
 
 ### 📱 Inline Mode — Acesso via Campo de Mensagem
@@ -108,41 +116,45 @@ Digite `@seu_bot` seguido de uma palavra-chave **em qualquer chat**:
 @seu_bot pausa         → Pausar/Retomar encaminhamento
 ```
 
-Todos os resultados inline têm botões completamente funcionais — você navega como se estivesse no `/menu`.
+Todos os resultados inline têm botões funcionais — você navega como no `/menu`.
 
 ---
 
-## 🧠 Inteligência Artificial — v3
+## 🧠 Inteligência Artificial
 
 ### IA de Texto
 
-Processa **todo texto** encaminhado antes de reenviar.
+Processa todo texto encaminhado antes de reenviar.
 
-**Modos:**
-- **Reescrever** — Deixa mais claro e profissional
+**Modos disponíveis:**
+- **Reescrever** — Reformula o texto mantendo o sentido
 - **Resumir** — Reduz a 1-2 frases essenciais
 - **Traduzir** — Para português do Brasil
-- **Personalizado** — Seu próprio prompt
+- **Cortar links** — Remove URLs do texto
+- **Remover menções** — Remove @usuário do texto
+- **Uppercase / Lowercase** — Converte capitalização
+- **Adicionar hashtags** — Gera e insere hashtags relevantes
+- **Prompt 1 / Prompt 2** — Dois slots de prompt personalizados com nomes editáveis
 
 **Provedores:**
-- **OpenAI** — GPT-4o-mini (rápido, preciso)
-- **Gemini** — Gemini 2.0 Flash (versátil, econômico)
+- **OpenAI** — GPT-4o-mini
+- **Gemini** — Gemini 2.0 Flash
 
 ### IA de Imagem
 
-Sobrepõe sua logo **automaticamente** em toda foto encaminhada.
+Aplica sua logo e efeitos automaticamente em toda foto encaminhada.
 
-**Como configurar:**
+**Como configurar a logo:**
 1. Envie `/logo` → mande sua imagem PNG com fundo transparente
 2. Vá em `/ia` → `🖼 Config Imagem`
-3. Escolha:
-   - **Posição**: ↖ Superior Esquerdo, ↗ Superior Direito, ↙ Inferior Esquerdo, ↘ Inferior Direito, ⊕ Centro
-   - **Escala**: 1-80% da largura da imagem
-   - **Opacidade**: 0-100% (0 = transparente, 100 = sólida)
-4. **"📷 Testar com foto"** para visualizar antes
-5. Ative **"IA IMG: ATIVA"**
+3. Escolha posição (↖ ↗ ↙ ↘ ⊕), escala (1–80%) e opacidade (0–100%)
+4. Use `📷 Testar com foto` para visualizar antes de ativar
+5. Ative `[IA IMG: ATIVA]`
 
-A partir daí toda foto recebe sua logo automaticamente.
+**Efeitos disponíveis (submenu 🎨 Efeitos):**
+- **Filtros**: P&B, vintage, brilho, contraste
+- **Texto na imagem**: sobreposição com cor, tamanho e posição configuráveis
+- **Borda colorida**: cor e espessura configuráveis
 
 ---
 
@@ -156,7 +168,7 @@ A partir daí toda foto recebe sua logo automaticamente.
 ### Linha 2: Processamento
 - **🔍 Filtros** — Exigir/bloquear palavras antes de enviar
 - **⏰ Horário** — Janela de funcionamento (ex: 08:00 até 18:00)
-- **💬 Mensagem** — Adicionar prefixo/rodapé (ex: "Repostado de X")
+- **💬 Mensagem** — Prefixo/rodapé (ex: "Repostado de X")
 
 ### Linha 3: Monitoramento
 - **📊 Status** — Estado e estatísticas atualizadas
@@ -164,7 +176,7 @@ A partir daí toda foto recebe sua logo automaticamente.
 - **ℹ️ Info** — Ping, ID do chat, testar conexão com destinos
 
 ### Linha 4: IA + ID
-- **🧠 IA** — Abrir painel de IA (texto + imagem)
+- **🧠 IA** — Painel de IA (texto + imagem + efeitos)
 - **🔎 Descobrir ID** — Encontrar IDs de grupos, canais, usuários
 
 ### Linha 5: Controle
@@ -174,9 +186,63 @@ A partir daí toda foto recebe sua logo automaticamente.
 
 ---
 
-## 🛠 Menu da VPS (`sudo bash install.sh`)
+## 🏪 Sistema de Revenda
 
-Após a primeira instalação, abra o menu principal:
+O comando `/admin` permite criar e gerenciar bots filhos para clientes ou revendedores, tudo pelo Telegram, sem acesso direto à VPS.
+
+**Disponível apenas para usuários na lista de admins.**
+
+### Como criar um bot filho
+
+1. Envie `/admin` no chat do seu bot principal
+2. Escolha `➕ Novo bot`
+3. Informe:
+   - **Nome**: identificador único na VPS (ex: `clienteabc`)
+   - **BOT_TOKEN**: token do bot do cliente (via @BotFather)
+   - **SESSION**: Session String da conta Telegram do cliente
+4. O bot é criado e iniciado automaticamente via Docker na mesma VPS
+
+### Gerenciar bots filhos
+
+No painel `/admin`, para cada bot filho:
+
+```
+▶️  Iniciar
+⏹  Parar
+🔄  Reiniciar
+📋  Ver logs (últimas 30 linhas)
+🗑  Deletar (remove container e arquivos)
+```
+
+### Variável de ambiente
+
+A variável `DOCKER_IMAGE` no `.env` do bot principal define qual imagem Docker é usada no deploy dos bots filhos:
+
+```env
+DOCKER_IMAGE=seu-usuario/userbot-telegram-pro:latest
+```
+
+---
+
+## 💾 Backup e Restore
+
+### `/backup`
+
+Exporta toda a configuração atual do bot como arquivo `.json` e envia direto no chat.
+
+O arquivo inclui: origens, destinos, modo, filtros, agendamento, prefixo/rodapé, configurações de IA e efeitos de imagem.
+
+### `/restore`
+
+Envia o comando `/restore` e em seguida envie o arquivo `.json` gerado pelo `/backup`.
+
+O bot importa todas as configurações automaticamente, sem necessidade de reconfigurar pelo menu.
+
+**Útil para:** migrar entre VPS, fazer cópia antes de atualizar, restaurar configuração após reinstalação.
+
+---
+
+## 🛠 Menu da VPS (`sudo bash install.sh`)
 
 ```
 [1] 🆕 Instalar novo bot
@@ -208,15 +274,15 @@ Após a primeira instalação, abra o menu principal:
 
 ```
 userbot-telegram-pro/
-├── bot.py              # Código principal (1265 linhas)
+├── bot.py              # Código principal (~1600 linhas)
 ├── install.sh          # Script de instalação & gerenciador VPS
-├── .gitignore          # Git ignore
-├── LICENSE             # MIT License
-├── README.md           # Este arquivo
-└── /opt/               # Diretório criado na VPS durante instalação
+├── .gitignore
+├── LICENSE
+├── README.md
+└── /opt/
     └── userbot-<nome>/
-        ├── .env        # Variáveis de ambiente (seguro)
-        └── bot.py      # Cópia do código (montado como volume)
+        ├── .env        # Variáveis de ambiente
+        └── bot.py
 ```
 
 ---
@@ -224,19 +290,33 @@ userbot-telegram-pro/
 ## 🔐 Segurança
 
 - **Session String** armazenada em variáveis de ambiente (Docker)
-- **API Keys** (OpenAI/Gemini) **NÃO salvas em arquivo** — apenas em memória
+- **API Keys** (OpenAI/Gemini) não salvas em arquivo — apenas em memória
 - **Arquivos .env** têm permissão 600 (somente leitura pelo owner)
 - **Código montado como volume read-only** — impossível modificar durante execução
-- **.gitignore** previne commit de credenciais acidentais
+- **.gitignore** previne commit acidental de credenciais
 
 ---
 
 ## 🐳 Requisitos de Sistema
 
-- **CPU**: 0.5 cores (mínimo)
+- **CPU**: 0.5 cores (mínimo por bot)
 - **RAM**: 256 MB por bot (recomendado 512 MB+)
 - **Disco**: 500 MB por bot (imagens temporárias em memória)
-- **Largura de banda**: Depende do volume de mensagens
+- **Largura de banda**: depende do volume de mensagens
+
+---
+
+## 📊 Estatísticas
+
+O bot rastreia automaticamente:
+
+- **Enviadas** — Total de mensagens encaminhadas com sucesso
+- **Erros** — Tentativas de envio que falharam
+- **Uptime** — Tempo de execução contínua
+- **Por hora** — Distribuição de mensagens por hora do dia
+- **Histórico** — Últimas 200 mensagens com timestamp
+
+Visualize em `/menu` → `📊 Status`.
 
 ---
 
@@ -251,16 +331,14 @@ docker logs userbot-seubot
 # Reiniciar
 docker restart userbot-seubot
 
-# Verificar se Docker está rodando
+# Verificar se o container existe
 docker ps -a
 ```
 
 ### Session String inválida
 
 ```bash
-# Abra o menu VPS
 sudo bash install.sh
-
 # Escolha [5] Regerar Session String
 # Faça login novamente no Telegram
 ```
@@ -268,41 +346,37 @@ sudo bash install.sh
 ### IA não funciona
 
 1. Verifique se a API Key foi salva: `/ia` → Ver config
-2. Testee com uma mensagem: `/ia` → Testar Texto
-3. Verifique logs: `docker logs userbot-seubot | grep "\[IA\]"`
+2. Teste com uma mensagem: `/ia` → Testar Texto
+3. Verifique logs: `docker logs userbot-seubot | grep "[IA]"`
 
 ### Logo não aparece em fotos
 
-1. Verifique se Pillow está instalado: `docker logs | grep "Pillow"`
-2. Confirme logo foi enviada: `/ia` → Config Imagem → Ver logo
-3. Teste com foto: `/ia` → Config Imagem → Testar com foto
-4. Ative IA de Imagem: `[✅ IA IMG: ATIVA]`
+1. Confirme que Pillow está instalado: `docker logs userbot-seubot | grep "Pillow"`
+2. Confirme que a logo foi enviada: `/ia` → Config Imagem → Ver logo
+3. Teste: `/ia` → Config Imagem → Testar com foto
+4. Ative: `[IA IMG: ATIVA]`
 
----
+### Bot filho não inicia (revenda)
 
-## 📊 Estatísticas
+1. Verifique se `DOCKER_IMAGE` está definido no `.env` do bot principal
+2. Confirme que o BOT_TOKEN e a SESSION informados são válidos
+3. Veja os logs do bot filho: `/admin` → selecionar bot → `📋 Ver logs`
+4. Verifique se há conflito de nome: dois bots com o mesmo identificador não podem coexistir
+5. Confirme que a VPS tem memória suficiente para mais um container
 
-O bot rastreia automaticamente:
+### Backup/Restore com erro
 
-- ✉️ **Enviadas** — Total de mensagens encaminhadas com sucesso
-- ⚠️ **Erros** — Tentativas de envio que falharam
-- ⏱️ **Uptime** — Tempo de execução contínua
-- 📈 **Por hora** — Distribuição de mensagens por hora do dia
-- 📋 **Histórico** — Últimas 200 mensagens com timestamp
-
-Visualize em `/menu` → `📊 Status`.
+- O arquivo `.json` deve ser enviado diretamente no chat após o comando `/restore`, sem texto adicional
+- Se a importação falhar, verifique se o arquivo não foi corrompido (abra e veja se é um JSON válido)
 
 ---
 
 ## 🚀 Upgrade Futuro
 
-Este projeto está em desenvolvimento contínuo. Possíveis upgrades:
-
 - [ ] Dashboard web para gerenciamento
 - [ ] Banco de dados para persistência
 - [ ] Webhook para integração com outros serviços
 - [ ] Detecção de duplicatas (não enviar mensagem 2x)
-- [ ] Backup automático de configs
 - [ ] Multi-idioma na UI
 - [ ] Remoção de logos existentes (detecção IA)
 - [ ] Suporte a Claude API para IA de texto
@@ -311,17 +385,23 @@ Este projeto está em desenvolvimento contínuo. Possíveis upgrades:
 
 ## 📝 Changelog
 
-### v3 (Atual)
-- ✨ Inline Mode completo com 13 menus
-- 🧠 IA de Texto (OpenAI + Gemini)
-- 🖼 IA de Imagem (Pillow — logo com escala/opacidade/posição)
-- 🔧 Menu de IA integrado na instalação VPS
-- 📱 Busca inteligente no inline mode
-- 🎨 Interface aprimorada com emojis
+### v3.1 (Atual)
+- IA de Texto: novos modos cortar links, remover menções, uppercase, lowercase, hashtags, 2 prompts personalizados com nome editável
+- IA de Imagem: filtros P&B/vintage/brilho/contraste, sobreposição de texto (cor/tamanho/posição), borda colorida — via submenu `🎨 Efeitos`
+- `/admin`: criação e gerenciamento de bots filhos para revenda, com deploy automático via Docker
+- Menu fixo na barra de conversa: comandos registrados via `setMyCommands` ao iniciar
+- `/backup` e `/restore`: exportação e importação de configuração como `.json`
+
+### v3.0
+- Inline Mode completo com 13 menus
+- IA de Texto (OpenAI + Gemini)
+- IA de Imagem (logo com escala/opacidade/posição via Pillow)
+- Menu de IA integrado na instalação VPS
+- Busca inteligente no inline mode
 
 ### v2
 - Multi-bot core
-- Forward/Copy modes
+- Modos forward e copy
 - Filtros por palavra
 - Agendamento por hora
 - Descobrir ID
@@ -335,20 +415,20 @@ Este projeto está em desenvolvimento contínuo. Possíveis upgrades:
 
 ## 💬 Suporte & Contribuições
 
-**Issues & PRs são bem-vindos!**
+Issues e PRs são bem-vindos.
 
 Para relatar um bug:
 1. Colete os logs: `docker logs userbot-seubot > log.txt`
-2. Descreva o comportamento esperado vs. atual
+2. Descreva o comportamento esperado vs. o que aconteceu
 3. Abra uma issue com os detalhes
 
 ---
 
 ## 📜 Licença
 
-Este projeto está sob a **licença MIT** — veja [LICENSE](LICENSE) para detalhes.
+MIT — veja [LICENSE](LICENSE) para detalhes.
 
-Resumo: você é livre para usar, modificar e distribuir, desde que mencione o autor original e não se responsabilize.
+Você pode usar, modificar e distribuir, desde que mantenha a atribuição ao autor original.
 
 ---
 
@@ -358,10 +438,7 @@ Resumo: você é livre para usar, modificar e distribuir, desde que mencione o a
 - [Pillow](https://python-pillow.org/) — Processamento de imagens
 - [OpenAI](https://openai.com/) — ChatGPT API
 - [Google Gemini](https://google.ai) — Gemini API
-- Comunidade de developers que usa e contribui
 
 ---
 
-**Feito com ❤️ para automação de Telegram.**
-
-*Última atualização: Abril 2025 | v3.0*
+*Última atualização: Maio 2025 | v3.1*

@@ -1,4 +1,4 @@
-import os, logging, asyncio, re, time, aiohttp, io
+import os, logging, asyncio, re, time, aiohttp, io, subprocess, json
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
 from telethon.tl.types import Channel, Chat, User
@@ -16,6 +16,7 @@ SESSION   = os.environ["SESSION_STRING"]
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 BOT_NOME  = os.environ.get("BOT_NOME", "UserBot")
 ADMIN_IDS = set(int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip().isdigit())
+DOCKER_IMAGE = os.environ.get("DOCKER_IMAGE", "inforlozzi/userbot-v3")
 
 _tgt_raw = os.environ.get("TARGET_GROUP_ID", "")
 DESTINOS = set(int(x) for x in re.split(r"[,; ]+", _tgt_raw) if x.strip().lstrip("-").isdigit())
@@ -39,6 +40,16 @@ AGENDAMENTO     = {"ativo": False, "inicio": "00:00", "fim": "23:59"}
 ultimo_envio    = 0
 MODO_SILENCIOSO = False
 
+# ── Reseller Bots ─────────────────────────────────────────────────────────────
+
+RESELLER_BOTS = {}   # { "nome": { "token": ..., "container": ..., "ativo": True, "criado": "...", "admin_ids": [...] } }
+RESELLER_LIMITE = {
+    "max_destinos": 5,
+    "max_origens":  10,
+    "ia_permitida": True,
+    "expira_em":    None,
+}
+
 # ── IA: Configuração ──────────────────────────────────────────────────────────
 
 IA_CONFIG = {
@@ -55,6 +66,9 @@ IA_CONFIG = {
         "reescrito, sem explicações adicionais."
     ),
     "modo":         "reescrever",
+    # Nomes dos slots custom
+    "personalizado_2_nome": "Custom 2",
+    "personalizado_3_nome": "Custom 3",
     # Imagem
     "img_ativo":    False,
     "img_logo":     b"",
@@ -62,13 +76,26 @@ IA_CONFIG = {
     "img_posicao":  "inferior_direito",
     "img_escala":   25,
     "img_opacidade":90,
+    # Efeitos de imagem
+    "img_filtro":            "nenhum",   # nenhum | bw | vintage | bright | contrast
+    "img_texto_ativo":       False,
+    "img_texto":             "",
+    "img_texto_cor":         "#FFFFFF",
+    "img_texto_tamanho":     24,
+    "img_texto_pos":         "inferior_esquerdo",
+    "img_borda_ativo":       False,
+    "img_borda_cor":         "#000000",
+    "img_borda_espessura":   5,
 }
 
 PROMPTS_PADRAO = {
-    "reescrever": "Reescreva a mensagem a seguir de forma clara e objetiva, mantendo o significado original. Responda APENAS com o texto reescrito.",
-    "resumir":    "Resuma a mensagem a seguir em 1-2 frases objetivas. Responda APENAS com o resumo.",
-    "traduzir":   "Traduza a mensagem a seguir para o português do Brasil. Responda APENAS com a tradução.",
+    "reescrever":    "Reescreva a mensagem a seguir de forma clara e objetiva, mantendo o significado original. Responda APENAS com o texto reescrito.",
+    "resumir":       "Resuma a mensagem a seguir em 1-2 frases objetivas. Responda APENAS com o resumo.",
+    "traduzir":      "Traduza a mensagem a seguir para o português do Brasil. Responda APENAS com a tradução.",
     "personalizado": "",
+    "adicionar_hashtags": "Leia a mensagem a seguir e adicione de 3 a 6 hashtags relevantes no final do texto. Retorne o texto original com as hashtags no final, sem explicações.",
+    "personalizado_2": "",
+    "personalizado_3": "",
 }
 
 # ── Emojis ────────────────────────────────────────────────────────────────────
@@ -182,8 +209,26 @@ async def get_dialogs_safe():
 async def processar_com_ia(texto: str):
     if not texto or not texto.strip():
         return None
+
+    modo = IA_CONFIG["modo"]
+
+    # Modos locais (sem chamada à IA)
+    if modo == "cortar_links":
+        resultado = re.sub(r"https?://\S+", "", texto).strip()
+        return resultado if resultado else texto
+
+    if modo == "remover_mencoes":
+        resultado = re.sub(r"@\w+", "", texto).strip()
+        return resultado if resultado else texto
+
+    if modo == "uppercase":
+        return texto.upper()
+
+    if modo == "lowercase":
+        return texto.lower()
+
     provedor = IA_CONFIG["provedor"]
-    prompt   = IA_CONFIG["prompt"] or PROMPTS_PADRAO.get(IA_CONFIG["modo"], "")
+    prompt   = IA_CONFIG["prompt"] or PROMPTS_PADRAO.get(modo, "")
     try:
         if provedor == "openai":
             api_key = IA_CONFIG["api_key_oai"]
@@ -242,51 +287,189 @@ def _pillow_ok():
         return False
 
 
-def processar_imagem(img_bytes: bytes):
-    """Aplica a logo do admin sobre a imagem recebida. Retorna bytes JPEG ou None."""
-    if not IA_CONFIG["img_logo"]:
-        return None
+def _hex_to_rgb(hex_color: str):
+    """Converte cor hex (#RRGGBB) para tupla (R, G, B)."""
+    hex_color = hex_color.lstrip("#")
+    if len(hex_color) == 3:
+        hex_color = "".join(c*2 for c in hex_color)
     try:
-        from PIL import Image
+        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+    except Exception:
+        return (255, 255, 255)
+
+
+def processar_imagem(img_bytes: bytes):
+    """Aplica filtros, texto e logo sobre a imagem recebida. Retorna bytes JPEG ou None."""
+    try:
+        from PIL import Image, ImageEnhance, ImageDraw, ImageFont, ImageOps
 
         base = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
-        logo = Image.open(io.BytesIO(IA_CONFIG["img_logo"])).convert("RGBA")
 
-        # Redimensionar logo proporcionalmente
-        escala       = IA_CONFIG["img_escala"] / 100
-        nova_larg    = max(10, int(base.width * escala))
-        ratio        = nova_larg / logo.width
-        nova_alt     = max(10, int(logo.height * ratio))
-        logo         = logo.resize((nova_larg, nova_alt), Image.LANCZOS)
+        # ── Aplicar filtro ────────────────────────────────────────────────
+        filtro = IA_CONFIG.get("img_filtro", "nenhum")
+        if filtro == "bw":
+            grey = base.convert("L")
+            base = grey.convert("RGBA")
+        elif filtro == "vintage":
+            rgb = base.convert("RGB")
+            rgb = ImageEnhance.Color(rgb).enhance(0.6)
+            rgb = ImageEnhance.Contrast(rgb).enhance(0.85)
+            rgb = ImageEnhance.Brightness(rgb).enhance(1.1)
+            base = rgb.convert("RGBA")
+        elif filtro == "bright":
+            rgb = ImageEnhance.Brightness(base.convert("RGB")).enhance(1.2)
+            base = rgb.convert("RGBA")
+        elif filtro == "contrast":
+            rgb = ImageEnhance.Contrast(base.convert("RGB")).enhance(1.3)
+            base = rgb.convert("RGBA")
 
-        # Opacidade
-        opac = int(IA_CONFIG["img_opacidade"] * 2.55)
-        if opac < 255:
-            r, g, b, a = logo.split()
-            a = a.point(lambda x: min(x, opac))
-            logo = Image.merge("RGBA", (r, g, b, a))
+        # ── Sobrepor texto ────────────────────────────────────────────────
+        if IA_CONFIG.get("img_texto_ativo") and IA_CONFIG.get("img_texto"):
+            draw = ImageDraw.Draw(base)
+            tamanho = IA_CONFIG.get("img_texto_tamanho", 24)
+            try:
+                font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", tamanho)
+            except Exception:
+                font = ImageFont.load_default()
+            cor_rgb = _hex_to_rgb(IA_CONFIG.get("img_texto_cor", "#FFFFFF"))
+            txt = IA_CONFIG["img_texto"]
+            mg  = int(base.width * 0.02)
+            try:
+                bbox = draw.textbbox((0, 0), txt, font=font)
+                tw = bbox[2] - bbox[0]
+                th = bbox[3] - bbox[1]
+            except Exception:
+                tw, th = draw.textsize(txt, font=font)
+            pos_txt = IA_CONFIG.get("img_texto_pos", "inferior_esquerdo")
+            pos_map_txt = {
+                "superior_esquerdo": (mg, mg),
+                "superior_direito":  (base.width - tw - mg, mg),
+                "inferior_esquerdo": (mg, base.height - th - mg),
+                "inferior_direito":  (base.width - tw - mg, base.height - th - mg),
+                "centro":            ((base.width - tw) // 2, (base.height - th) // 2),
+            }
+            tx, ty = pos_map_txt.get(pos_txt, (mg, base.height - th - mg))
+            # Sombra leve
+            draw.text((tx+1, ty+1), txt, font=font, fill=(0, 0, 0, 180))
+            draw.text((tx, ty), txt, font=font, fill=cor_rgb + (255,))
 
-        # Posição
-        mg = int(base.width * 0.02)
-        pos_map = {
-            "superior_esquerdo": (mg,                          mg),
-            "superior_direito":  (base.width - nova_larg - mg, mg),
-            "inferior_esquerdo": (mg,                          base.height - nova_alt - mg),
-            "inferior_direito":  (base.width - nova_larg - mg, base.height - nova_alt - mg),
-            "centro":            ((base.width - nova_larg) // 2, (base.height - nova_alt) // 2),
-        }
-        pos = pos_map.get(IA_CONFIG["img_posicao"], pos_map["inferior_direito"])
+        # ── Adicionar borda ───────────────────────────────────────────────
+        if IA_CONFIG.get("img_borda_ativo"):
+            espessura = IA_CONFIG.get("img_borda_espessura", 5)
+            cor_borda = _hex_to_rgb(IA_CONFIG.get("img_borda_cor", "#000000"))
+            base_rgb = base.convert("RGB")
+            base_rgb = ImageOps.expand(base_rgb, border=espessura, fill=cor_borda)
+            base = base_rgb.convert("RGBA")
 
-        overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
-        overlay.paste(logo, pos, logo)
-        resultado = Image.alpha_composite(base, overlay).convert("RGB")
+        # ── Aplicar logo ──────────────────────────────────────────────────
+        if IA_CONFIG.get("img_logo"):
+            logo = Image.open(io.BytesIO(IA_CONFIG["img_logo"])).convert("RGBA")
+            escala    = IA_CONFIG["img_escala"] / 100
+            nova_larg = max(10, int(base.width * escala))
+            ratio     = nova_larg / logo.width
+            nova_alt  = max(10, int(logo.height * ratio))
+            logo      = logo.resize((nova_larg, nova_alt), Image.LANCZOS)
 
+            opac = int(IA_CONFIG["img_opacidade"] * 2.55)
+            if opac < 255:
+                r, g, b, a = logo.split()
+                a = a.point(lambda x: min(x, opac))
+                logo = Image.merge("RGBA", (r, g, b, a))
+
+            mg2 = int(base.width * 0.02)
+            pos_map = {
+                "superior_esquerdo": (mg2,                          mg2),
+                "superior_direito":  (base.width - nova_larg - mg2, mg2),
+                "inferior_esquerdo": (mg2,                          base.height - nova_alt - mg2),
+                "inferior_direito":  (base.width - nova_larg - mg2, base.height - nova_alt - mg2),
+                "centro":            ((base.width - nova_larg) // 2, (base.height - nova_alt) // 2),
+            }
+            pos = pos_map.get(IA_CONFIG["img_posicao"], pos_map["inferior_direito"])
+            overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
+            overlay.paste(logo, pos, logo)
+            base = Image.alpha_composite(base, overlay)
+
+        resultado = base.convert("RGB")
         buf = io.BytesIO()
         resultado.save(buf, format="JPEG", quality=92)
         return buf.getvalue()
     except Exception as e:
         logger.error("[IA-IMG] %s", e)
         return None
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  RESELLER ADMIN — Deploy e Gerenciamento de Bots Filhos
+# ════════════════════════════════════════════════════════════════════════════
+
+async def deploy_bot_filho(nome: str, config: dict):
+    env_vars = {
+        "API_ID":         str(API_ID),
+        "API_HASH":       API_HASH,
+        "BOT_TOKEN":      config["token"],
+        "SESSION_STRING": config.get("session", ""),
+        "BOT_NOME":       nome,
+        "ADMIN_IDS":      ",".join(str(x) for x in config.get("admin_ids", [])),
+    }
+    env_str = " ".join(f'-e {k}="{v}"' for k, v in env_vars.items())
+    cmd = f'docker run -d --name userbot-{nome} --restart unless-stopped {env_str} {DOCKER_IMAGE}'
+    proc = await asyncio.create_subprocess_shell(
+        cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    out, err = await proc.communicate()
+    if proc.returncode == 0:
+        return True, out.decode().strip()[:12]
+    return False, err.decode().strip()[:200]
+
+
+async def bot_op(nome: str, op: str) -> str:
+    cmds = {
+        "start":   f"docker start userbot-{nome}",
+        "stop":    f"docker stop userbot-{nome}",
+        "restart": f"docker restart userbot-{nome}",
+        "logs":    f"docker logs --tail=20 userbot-{nome}",
+        "rm":      f"docker stop userbot-{nome} && docker rm userbot-{nome}",
+    }
+    if op not in cmds:
+        return "Operação inválida."
+    proc = await asyncio.create_subprocess_shell(
+        cmds[op],
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    out, err = await proc.communicate()
+    return (out.decode() + err.decode()).strip()[-800:]
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  MENU FIXO NA BARRA — registrar_menu_comandos + /backup + /restore
+# ════════════════════════════════════════════════════════════════════════════
+
+async def registrar_menu_comandos():
+    commands = [
+        {"command": "menu",    "description": "📋 Painel de controle completo"},
+        {"command": "status",  "description": "📊 Ver status e estatísticas"},
+        {"command": "ia",      "description": "🧠 Configurar IA (texto + imagem)"},
+        {"command": "logo",    "description": "🖼 Enviar logo para sobrepor em fotos"},
+        {"command": "admin",   "description": "⚙️ Painel admin de revenda"},
+        {"command": "backup",  "description": "💾 Exportar configuração atual"},
+        {"command": "restore", "description": "📥 Importar configuração salva"},
+        {"command": "start",   "description": "👋 Bem-vindo e instruções"},
+    ]
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMyCommands"
+    payload = {"commands": json.dumps(commands)}
+    try:
+        async with aiohttp.ClientSession() as s:
+            resp = await s.post(url, data=payload)
+            data = await resp.json()
+            if data.get("ok"):
+                logger.info("[MENU] Comandos registrados no menu da barra.")
+            else:
+                logger.warning("[MENU] Falha ao registrar comandos: %s", data)
+    except Exception as e:
+        logger.error("[MENU] Erro ao registrar comandos: %s", e)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -335,6 +518,7 @@ def ia_config_texto():
     k_oai = ("***" + IA_CONFIG["api_key_oai"][-4:]) if IA_CONFIG["api_key_oai"] else "nao definida"
     k_gem = ("***" + IA_CONFIG["api_key_gem"][-4:]) if IA_CONFIG["api_key_gem"] else "nao definida"
     logo  = IA_CONFIG["img_logo_nome"] if IA_CONFIG["img_logo"] else "nenhuma"
+    filtro = IA_CONFIG.get("img_filtro", "nenhum")
     return "\n".join([
         E_IA + " CONFIGURACAO DE IA", "=" * 26,
         "IA Texto  : " + ("ATIVA"  if IA_CONFIG["ativo"]     else "INATIVA"),
@@ -348,25 +532,61 @@ def ia_config_texto():
         "Logo      : " + logo,
         "Posicao   : " + IA_CONFIG["img_posicao"],
         "Escala    : " + str(IA_CONFIG["img_escala"])    + "%",
-        "Opacidade : " + str(IA_CONFIG["img_opacidade"]) + "%", "=" * 26,
+        "Opacidade : " + str(IA_CONFIG["img_opacidade"]) + "%",
+        "Filtro    : " + filtro, "=" * 26,
         "Prompt    :", (IA_CONFIG["prompt"][:180] + "...") if len(IA_CONFIG["prompt"]) > 180 else IA_CONFIG["prompt"],
     ])
 
 
 def ia_img_texto():
     logo = IA_CONFIG["img_logo_nome"] if IA_CONFIG["img_logo"] else "nenhuma"
+    filtro = IA_CONFIG.get("img_filtro", "nenhum")
+    txt_status = "ON" if IA_CONFIG.get("img_texto_ativo") else "OFF"
+    borda_status = "ON" if IA_CONFIG.get("img_borda_ativo") else "OFF"
     return "\n".join([
         E_IMG + " IA IMAGEM", "=" * 26,
         "Estado   : " + ("ATIVA" if IA_CONFIG["img_ativo"] else "INATIVA"),
         "Logo     : " + logo,
         "Posicao  : " + IA_CONFIG["img_posicao"].replace("_", " "),
         "Escala   : " + str(IA_CONFIG["img_escala"])    + "% da largura",
-        "Opacidade: " + str(IA_CONFIG["img_opacidade"]) + "%", "=" * 26,
+        "Opacidade: " + str(IA_CONFIG["img_opacidade"]) + "%",
+        "Filtro   : " + filtro,
+        "Texto img: " + txt_status + (" | " + IA_CONFIG.get("img_texto","")[:30] if IA_CONFIG.get("img_texto_ativo") else ""),
+        "Borda    : " + borda_status, "=" * 26,
         "Como usar:",
         "1. Envie sua logo PNG (fundo transparente) via /logo",
         "2. Ajuste posicao, escala e opacidade",
         "3. Ative a IA de Imagem",
         "Toda foto encaminhada recebera sua logo automaticamente.",
+    ])
+
+
+def ia_img_efeitos_texto():
+    filtro = IA_CONFIG.get("img_filtro", "nenhum")
+    txt_at = "ON" if IA_CONFIG.get("img_texto_ativo") else "OFF"
+    borda_at = "ON" if IA_CONFIG.get("img_borda_ativo") else "OFF"
+    return "\n".join([
+        "🎨 EFEITOS DE IMAGEM", "=" * 26,
+        "Filtro      : " + filtro,
+        "Texto na img: " + txt_at,
+        "Texto       : " + (IA_CONFIG.get("img_texto","") or "nenhum"),
+        "Cor texto   : " + IA_CONFIG.get("img_texto_cor","#FFFFFF"),
+        "Tamanho     : " + str(IA_CONFIG.get("img_texto_tamanho",24)) + "px",
+        "Pos. texto  : " + IA_CONFIG.get("img_texto_pos","inferior_esquerdo").replace("_"," "),
+        "Borda       : " + borda_at,
+        "Cor borda   : " + IA_CONFIG.get("img_borda_cor","#000000"),
+        "Espessura   : " + str(IA_CONFIG.get("img_borda_espessura",5)) + "px",
+    ])
+
+
+def admin_txt():
+    total = len(RESELLER_BOTS)
+    ativos = sum(1 for b in RESELLER_BOTS.values() if b.get("ativo", False))
+    return "\n".join([
+        "⚙️ PAINEL ADMIN DE REVENDA", "=" * 28,
+        "Bots cadastrados: " + str(total),
+        "Bots ativos     : " + str(ativos),
+        "Imagem Docker   : " + DOCKER_IMAGE,
     ])
 
 
@@ -401,13 +621,40 @@ def kb_ia():
     img = (E_OK + " IA IMG: ATIVA")    if IA_CONFIG["img_ativo"]  else "[ ] IA Img: inativa"
     oai = (E_OK + " OpenAI") if IA_CONFIG["provedor"] == "openai" else "OpenAI"
     gem = (E_OK + " Gemini") if IA_CONFIG["provedor"] == "gemini" else "Gemini"
-    modos = ["reescrever", "resumir", "traduzir", "personalizado"]
+    modos_basicos = ["reescrever", "resumir", "traduzir", "personalizado"]
+    modos_extra   = ["cortar_links", "remover_mencoes", "uppercase", "lowercase",
+                     "adicionar_hashtags", "personalizado_2", "personalizado_3"]
     lm = []
-    for i in range(0, len(modos), 2):
+    for i in range(0, len(modos_basicos), 2):
         lm.append([Button.inline(
             (E_OK + " " + m) if m == IA_CONFIG["modo"] else m,
             ("ia_modo|" + m).encode()
-        ) for m in modos[i:i+2]])
+        ) for m in modos_basicos[i:i+2]])
+    # linha de modos extras
+    lm.append([Button.inline(
+        (E_OK + " " + m) if m == IA_CONFIG["modo"] else m,
+        ("ia_modo|" + m).encode()
+    ) for m in ["cortar_links", "remover_mencoes"]])
+    lm.append([Button.inline(
+        (E_OK + " UPPER") if "uppercase" == IA_CONFIG["modo"] else "UPPER",
+        b"ia_modo|uppercase"
+    ), Button.inline(
+        (E_OK + " LOWER") if "lowercase" == IA_CONFIG["modo"] else "LOWER",
+        b"ia_modo|lowercase"
+    ), Button.inline(
+        (E_OK + " #tags") if "adicionar_hashtags" == IA_CONFIG["modo"] else "#tags",
+        b"ia_modo|adicionar_hashtags"
+    )])
+    # slots custom
+    n2 = IA_CONFIG.get("personalizado_2_nome", "Custom 2")
+    n3 = IA_CONFIG.get("personalizado_3_nome", "Custom 3")
+    lm.append([Button.inline(
+        (E_OK + " " + n2) if "personalizado_2" == IA_CONFIG["modo"] else n2,
+        b"ia_modo|personalizado_2"
+    ), Button.inline(
+        (E_OK + " " + n3) if "personalizado_3" == IA_CONFIG["modo"] else n3,
+        b"ia_modo|personalizado_3"
+    )])
     return [
         [Button.inline(at,  b"ia_toggle"), Button.inline(img, b"ia_img_toggle")],
         [Button.inline(E_SPARK + " " + oai, b"ia_prov|openai"),
@@ -417,10 +664,14 @@ def kb_ia():
          Button.inline(E_KEY   + " Key Gemini",    b"ia_key|gemini")],
         [Button.inline(E_GEAR  + " Modelo OpenAI", b"ia_model|openai"),
          Button.inline(E_GEAR  + " Modelo Gemini", b"ia_model|gemini")],
-        [Button.inline(E_MANUAL + " Prompt custom", b"ia_prompt"),
-         Button.inline(E_INFO   + " Ver config",    b"ia_ver")],
-        [Button.inline(E_SPARK + " Testar Texto",  b"ia_test"),
-         Button.inline(E_IMG   + " Config Imagem", b"ia_img_menu")],
+        [Button.inline(E_MANUAL + " Prompt custom",   b"ia_prompt"),
+         Button.inline(E_MANUAL + " Nome Custom 2",   b"ia_nome_c2"),
+         Button.inline(E_MANUAL + " Nome Custom 3",   b"ia_nome_c3")],
+        [Button.inline(E_MANUAL + " Prompt C2",       b"ia_prompt_c2"),
+         Button.inline(E_MANUAL + " Prompt C3",       b"ia_prompt_c3")],
+        [Button.inline(E_INFO   + " Ver config",   b"ia_ver"),
+         Button.inline(E_SPARK  + " Testar Texto", b"ia_test")],
+        [Button.inline(E_IMG    + " Config Imagem", b"ia_img_menu")],
         [Button.inline(E_VOLTAR + " Voltar", b"m_back")],
     ]
 
@@ -449,7 +700,56 @@ def kb_ia_img():
          Button.inline(E_MAIS + " Opac: "    + str(IA_CONFIG["img_opacidade"])+ "%", b"img_opacidade")],
         [Button.inline(E_CAM    + " Testar com foto",  b"img_testar"),
          Button.inline(E_LIMPAR + " Remover logo",     b"img_rm_logo")],
+        [Button.inline("🎨 Efeitos", b"ia_img_efeitos")],
         [Button.inline(E_VOLTAR + " Voltar", b"m_ia")],
+    ]
+
+
+def kb_ia_img_efeitos():
+    filtro = IA_CONFIG.get("img_filtro", "nenhum")
+    txt_at = "✏ Texto: ON" if IA_CONFIG.get("img_texto_ativo") else "✏ Texto: OFF"
+    borda_at = "🖼 Borda: ON" if IA_CONFIG.get("img_borda_ativo") else "🖼 Borda: OFF"
+
+    def fbt(label, val):
+        return Button.inline((E_OK+" "+label) if filtro==val else label, ("img_filtro|"+val).encode())
+
+    return [
+        [fbt("nenhum","nenhum"), fbt("P&B","bw"), fbt("vintage","vintage"),
+         fbt("bright","bright"), fbt("contraste","contrast")],
+        [Button.inline(txt_at, b"img_txt_toggle")],
+        [Button.inline("🔤 Editar texto",  b"img_txt_editar"),
+         Button.inline("🎨 Cor texto",     b"img_txt_cor"),
+         Button.inline("📐 Tamanho",       b"img_txt_tamanho")],
+        [Button.inline(borda_at, b"img_borda_toggle")],
+        [Button.inline("🎨 Cor borda",     b"img_borda_cor"),
+         Button.inline("📏 Espessura",     b"img_borda_espessura")],
+        [Button.inline(E_VOLTAR + " Voltar", b"ia_img_menu")],
+    ]
+
+
+def kb_admin():
+    return [
+        [Button.inline("➕ Criar novo bot",   b"adm_criar"),
+         Button.inline("📋 Listar bots",      b"adm_listar")],
+        [Button.inline("▶ Iniciar bot",       b"adm_sel_start"),
+         Button.inline("⏹ Parar bot",         b"adm_sel_stop")],
+        [Button.inline("🔄 Reiniciar bot",    b"adm_sel_restart"),
+         Button.inline("📄 Ver logs",          b"adm_sel_logs")],
+        [Button.inline("⚙ Config limites",    b"adm_limites"),
+         Button.inline("🗑 Deletar bot",       b"adm_sel_rm")],
+        [Button.inline(E_VOLTAR + " Voltar ao menu", b"m_back")],
+    ]
+
+
+def kb_admin_bot(nome):
+    n = nome.encode()
+    return [
+        [Button.inline("▶ Iniciar",   b"adm_op|start|"  + n),
+         Button.inline("⏹ Parar",    b"adm_op|stop|"   + n),
+         Button.inline("🔄 Reiniciar",b"adm_op|restart|"+ n)],
+        [Button.inline("📄 Logs",     b"adm_op|logs|"   + n),
+         Button.inline("🗑 Deletar",  b"adm_op|rm|"     + n)],
+        [Button.inline(E_VOLTAR + " Voltar", b"adm_listar")],
     ]
 
 
@@ -602,9 +902,12 @@ async def cmd_start(ev):
     if not is_admin(ev.sender_id): return
     await ev.respond(
         "Olá! Sou o " + BOT_NOME + ".\n\n"
-        "/menu — painel completo\n"
-        "/ia   — inteligência artificial\n"
-        "/logo — enviar logo para substituição em imagens\n\n"
+        "/menu   — painel completo\n"
+        "/ia     — inteligência artificial\n"
+        "/logo   — enviar logo para substituição em imagens\n"
+        "/admin  — painel admin de revenda\n"
+        "/backup — exportar configuração\n"
+        "/restore — importar configuração\n\n"
         "Dica: digite @" + (BOT_NOME.lower().replace(" ","")) + " no campo de mensagem "
         "para acessar qualquer menu sem abrir o chat."
     )
@@ -637,6 +940,44 @@ async def cmd_logo(ev):
         "Recomendado: PNG com fundo transparente (canal alpha).\n"
         "A logo será sobreposta nas fotos encaminhadas."
     )
+
+
+@bot.on(events.NewMessage(pattern=r"^/admin$"))
+async def cmd_admin(ev):
+    if not is_admin(ev.sender_id): return
+    await ev.respond(admin_txt(), buttons=kb_admin())
+
+
+@bot.on(events.NewMessage(pattern=r"^/backup$"))
+async def cmd_backup(ev):
+    if not is_admin(ev.sender_id): return
+    cfg = {
+        "destinos":    list(DESTINOS),
+        "origens":     list(SRC),
+        "ignorados":   list(IGNORADOS),
+        "filtros_on":  list(FILTROS_ON),
+        "filtros_off": list(FILTROS_OFF),
+        "mod":         MOD,
+        "prefixo":     PREFIXO,
+        "rodape":      RODAPE,
+        "delay":       DELAY,
+        "sem_bots":    SEM_BOTS,
+        "agendamento": AGENDAMENTO,
+        "somente_tipos": list(SOMENTE_TIPOS),
+        "ia": {k: v for k, v in IA_CONFIG.items() if k not in ("img_logo","api_key_oai","api_key_gem")},
+        "reseller_bots": RESELLER_BOTS,
+        "exportado_em": datetime.now().isoformat(),
+    }
+    buf = io.BytesIO(json.dumps(cfg, ensure_ascii=False, indent=2).encode())
+    buf.name = f"backup_{BOT_NOME}_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
+    await bot.send_file(ev.chat_id, buf, caption="💾 Backup gerado com sucesso.")
+
+
+@bot.on(events.NewMessage(pattern=r"^/restore$"))
+async def cmd_restore(ev):
+    if not is_admin(ev.sender_id): return
+    AGUARDANDO[ev.sender_id] = "restore_json"
+    await ev.respond("📥 Envie o arquivo .json de backup agora.")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -683,6 +1024,29 @@ async def inline_handler(ev):
         results.append(art(
             E_IMG + " IA de Imagem", "Substituir/sobrepor logo em fotos",
             ia_img_texto(), kb_ia_img()
+        ))
+
+    # Admin revenda
+    if not q or any(x in q for x in ("admin","revend","resell","bot filho","deploy")):
+        results.append(art(
+            "⚙️ Admin Revenda", "Criar e gerenciar bots filhos",
+            admin_txt(), kb_admin()
+        ))
+
+    # Backup
+    if not q or any(x in q for x in ("backup","exportar","salvar config")):
+        results.append(art(
+            "💾 Backup", "Exportar configuração atual",
+            "Use /backup para gerar o arquivo de backup.",
+            [[Button.inline(E_HOME+" Menu", b"m_back")]]
+        ))
+
+    # Restore
+    if not q or any(x in q for x in ("restore","importar","restaurar")):
+        results.append(art(
+            "📥 Restore", "Importar configuração salva",
+            "Use /restore e envie o arquivo .json.",
+            [[Button.inline(E_HOME+" Menu", b"m_back")]]
         ))
 
     # Origens
@@ -794,11 +1158,53 @@ async def inline_handler(ev):
 
 @bot.on(events.NewMessage())
 async def entrada_usuario(ev):
-    global PREFIXO, RODAPE, DELAY
+    global PREFIXO, RODAPE, DELAY, MOD, SEM_BOTS, PAUSADO, MODO_SILENCIOSO
+    global RESELLER_BOTS
     uid = ev.sender_id
     if not is_admin(uid): return
 
-    # Upload de logo (foto ou documento PNG)
+    # ── Restore JSON ─────────────────────────────────────────────────────
+    if uid in AGUARDANDO and AGUARDANDO[uid] == "restore_json":
+        if ev.document:
+            AGUARDANDO.pop(uid)
+            msg_p = await ev.respond("📥 Carregando backup...")
+            try:
+                raw = await ev.download_media(bytes)
+                cfg = json.loads(raw.decode("utf-8"))
+                # Restaurar variáveis globais
+                DESTINOS.clear();    DESTINOS.update(int(x) for x in cfg.get("destinos", []))
+                SRC.clear();         SRC.update(int(x) for x in cfg.get("origens", []))
+                IGNORADOS.clear();   IGNORADOS.update(int(x) for x in cfg.get("ignorados", []))
+                FILTROS_ON.clear();  FILTROS_ON.update(cfg.get("filtros_on", []))
+                FILTROS_OFF.clear(); FILTROS_OFF.update(cfg.get("filtros_off", []))
+                MOD         = cfg.get("mod", MOD)
+                PREFIXO     = cfg.get("prefixo", PREFIXO)
+                RODAPE      = cfg.get("rodape", RODAPE)
+                DELAY       = cfg.get("delay", DELAY)
+                SEM_BOTS    = cfg.get("sem_bots", SEM_BOTS)
+                SOMENTE_TIPOS.clear(); SOMENTE_TIPOS.update(cfg.get("somente_tipos", []))
+                if "agendamento" in cfg:
+                    AGENDAMENTO.update(cfg["agendamento"])
+                if "ia" in cfg:
+                    for k, v in cfg["ia"].items():
+                        if k in IA_CONFIG and k not in ("img_logo",):
+                            IA_CONFIG[k] = v
+                if "reseller_bots" in cfg:
+                    RESELLER_BOTS.update(cfg["reseller_bots"])
+                exp = cfg.get("exportado_em", "?")
+                await msg_p.edit(
+                    E_OK + " Backup restaurado com sucesso!\nExportado em: " + exp,
+                    buttons=[[Button.inline(E_HOME+" Menu", b"m_back")]]
+                )
+            except Exception as e:
+                await msg_p.edit(E_FECHAR + " Erro ao restaurar backup: " + str(e))
+            return
+        elif ev.text and not ev.text.startswith("/"):
+            await ev.respond("Envie o arquivo .json de backup.",
+                             buttons=[[Button.inline(E_FECHAR+" Cancelar", b"m_back")]])
+            return
+
+    # ── Upload de logo (foto ou documento PNG) ────────────────────────────
     if uid in AGUARDANDO and AGUARDANDO[uid] == "img_upload_logo":
         if ev.photo or ev.document:
             AGUARDANDO.pop(uid)
@@ -822,17 +1228,17 @@ async def entrada_usuario(ev):
             except Exception as e:
                 await msg_p.edit(E_FECHAR + " Erro ao salvar logo: " + str(e))
             return
-        elif ev.text and ev.text not in ("/logo", "/menu", "/ia", "/status", "/start"):
+        elif ev.text and ev.text not in ("/logo", "/menu", "/ia", "/status", "/start", "/admin", "/backup", "/restore"):
             await ev.respond("Envie uma imagem PNG.",
                              buttons=[[Button.inline(E_FECHAR+" Cancelar", b"m_back")]])
             return
 
-    # Foto de teste
+    # ── Foto de teste ────────────────────────────────────────────────────
     if uid in AGUARDANDO and AGUARDANDO[uid] == "img_testar":
         if ev.photo or ev.document:
             AGUARDANDO.pop(uid)
-            if not IA_CONFIG["img_logo"]:
-                await ev.respond(E_FECHAR+" Nenhuma logo. Use /logo.",
+            if not IA_CONFIG["img_logo"] and not IA_CONFIG.get("img_texto_ativo") and not IA_CONFIG.get("img_borda_ativo") and IA_CONFIG.get("img_filtro","nenhum") == "nenhum":
+                await ev.respond(E_FECHAR+" Nenhum efeito ativo. Configure logo, filtro, texto ou borda.",
                                  buttons=[[Button.inline(E_VOLTAR+" Voltar", b"ia_img_menu")]])
                 return
             msg_p = await ev.respond(E_IA + " Processando imagem de teste...")
@@ -840,7 +1246,7 @@ async def entrada_usuario(ev):
                 img_bytes = await ev.download_media(bytes)
                 res = processar_imagem(img_bytes)
                 if res:
-                    await bot.send_file(ev.chat_id, res, caption=E_OK + " Resultado com logo aplicada")
+                    await bot.send_file(ev.chat_id, res, caption=E_OK + " Resultado com efeitos aplicados")
                     await msg_p.delete()
                 else:
                     await msg_p.edit(E_FECHAR + " Erro. Verifique se Pillow está instalada.")
@@ -890,7 +1296,27 @@ async def entrada_usuario(ev):
         else: await ev.respond("Formato: HH:MM HH:MM")
     elif acao == "ia_key_openai":  IA_CONFIG["api_key_oai"]=txt; await ev.respond(E_OK+" Key OpenAI salva!",  buttons=kb_ia())
     elif acao == "ia_key_gemini":  IA_CONFIG["api_key_gem"]=txt; await ev.respond(E_OK+" Key Gemini salva!",  buttons=kb_ia())
-    elif acao == "ia_prompt":      IA_CONFIG["prompt"]=txt; IA_CONFIG["modo"]="personalizado"; await ev.respond(E_OK+" Prompt salvo!", buttons=kb_ia())
+    elif acao == "ia_prompt":
+        IA_CONFIG["prompt"]=txt
+        IA_CONFIG["modo"]="personalizado"
+        PROMPTS_PADRAO["personalizado"]=txt
+        await ev.respond(E_OK+" Prompt salvo!", buttons=kb_ia())
+    elif acao == "ia_prompt_c2":
+        IA_CONFIG["prompt"]=txt
+        IA_CONFIG["modo"]="personalizado_2"
+        PROMPTS_PADRAO["personalizado_2"]=txt
+        await ev.respond(E_OK+" Prompt Custom 2 salvo!", buttons=kb_ia())
+    elif acao == "ia_prompt_c3":
+        IA_CONFIG["prompt"]=txt
+        IA_CONFIG["modo"]="personalizado_3"
+        PROMPTS_PADRAO["personalizado_3"]=txt
+        await ev.respond(E_OK+" Prompt Custom 3 salvo!", buttons=kb_ia())
+    elif acao == "ia_nome_c2":
+        IA_CONFIG["personalizado_2_nome"]=txt
+        await ev.respond(E_OK+" Nome Custom 2: "+txt, buttons=kb_ia())
+    elif acao == "ia_nome_c3":
+        IA_CONFIG["personalizado_3_nome"]=txt
+        await ev.respond(E_OK+" Nome Custom 3: "+txt, buttons=kb_ia())
     elif acao == "ia_model_openai":IA_CONFIG["modelo_oai"]=txt; await ev.respond(E_OK+" Modelo OAI: "+txt, buttons=kb_ia())
     elif acao == "ia_model_gemini":IA_CONFIG["modelo_gem"]=txt; await ev.respond(E_OK+" Modelo GEM: "+txt, buttons=kb_ia())
     elif acao == "ia_test":
@@ -903,6 +1329,84 @@ async def entrada_usuario(ev):
     elif acao == "img_opacidade":
         if txt.isdigit() and 0<=int(txt)<=100: IA_CONFIG["img_opacidade"]=int(txt); await ev.respond(E_OK+" Opacidade: "+txt+"%", buttons=kb_ia_img())
         else: await ev.respond("Digite 0-100.")
+    elif acao == "img_txt_editar":
+        IA_CONFIG["img_texto"] = txt
+        await ev.respond(E_OK+" Texto definido: "+txt, buttons=kb_ia_img_efeitos())
+    elif acao == "img_txt_cor":
+        if re.match(r"^#[0-9A-Fa-f]{3,6}$", txt):
+            IA_CONFIG["img_texto_cor"] = txt
+            await ev.respond(E_OK+" Cor do texto: "+txt, buttons=kb_ia_img_efeitos())
+        else:
+            await ev.respond("Formato: #RRGGBB (ex: #FFFFFF)")
+    elif acao == "img_txt_tamanho":
+        if txt.isdigit() and 8<=int(txt)<=200:
+            IA_CONFIG["img_texto_tamanho"] = int(txt)
+            await ev.respond(E_OK+" Tamanho: "+txt+"px", buttons=kb_ia_img_efeitos())
+        else:
+            await ev.respond("Digite 8-200.")
+    elif acao == "img_borda_cor":
+        if re.match(r"^#[0-9A-Fa-f]{3,6}$", txt):
+            IA_CONFIG["img_borda_cor"] = txt
+            await ev.respond(E_OK+" Cor da borda: "+txt, buttons=kb_ia_img_efeitos())
+        else:
+            await ev.respond("Formato: #RRGGBB (ex: #000000)")
+    elif acao == "img_borda_espessura":
+        if txt.isdigit() and 1<=int(txt)<=100:
+            IA_CONFIG["img_borda_espessura"] = int(txt)
+            await ev.respond(E_OK+" Espessura: "+txt+"px", buttons=kb_ia_img_efeitos())
+        else:
+            await ev.respond("Digite 1-100.")
+    # ── Admin: estados de criação de bot filho ────────────────────────────
+    elif acao == "adm_nome":
+        nome_bot = txt.strip().replace(" ", "_")
+        if not nome_bot or not re.match(r"^[a-zA-Z0-9_]+$", nome_bot):
+            await ev.respond("Nome inválido. Use apenas letras, números e underscore.")
+            AGUARDANDO[uid] = "adm_nome"
+            return
+        if nome_bot in RESELLER_BOTS:
+            await ev.respond("Já existe um bot com esse nome. Escolha outro.")
+            AGUARDANDO[uid] = "adm_nome"
+            return
+        RESELLER_BOTS[nome_bot] = {"token": "", "container": "", "ativo": False,
+                                    "criado": datetime.now().isoformat(), "admin_ids": [uid],
+                                    "session": ""}
+        AGUARDANDO[uid] = "adm_token_" + nome_bot
+        await ev.respond(
+            "✅ Nome: " + nome_bot + "\n\n"
+            "Agora envie o BOT TOKEN obtido no @BotFather:\n"
+            "(formato: 123456789:ABCDefgh...)"
+        )
+    elif acao.startswith("adm_token_"):
+        nome_bot = acao[len("adm_token_"):]
+        token = txt.strip()
+        if not re.match(r"^\d+:[A-Za-z0-9_-]+$", token):
+            await ev.respond("Token inválido. Tente novamente.")
+            AGUARDANDO[uid] = acao
+            return
+        RESELLER_BOTS[nome_bot]["token"] = token
+        AGUARDANDO[uid] = "adm_session_" + nome_bot
+        await ev.respond(
+            "✅ Token salvo.\n\n"
+            "Envie a SESSION STRING do Telegram do cliente\n"
+            "(ou envie /pular para configurar depois)."
+        )
+    elif acao.startswith("adm_session_"):
+        nome_bot = acao[len("adm_session_"):]
+        session = "" if txt == "/pular" else txt.strip()
+        RESELLER_BOTS[nome_bot]["session"] = session
+        cfg = RESELLER_BOTS[nome_bot]
+        resumo = (
+            "📋 RESUMO DO BOT\n" + "="*24 + "\n"
+            "Nome   : " + nome_bot + "\n"
+            "Token  : ***" + cfg["token"][-8:] + "\n"
+            "Session: " + ("configurada" if session else "não configurada") + "\n"
+            "Criado : " + cfg["criado"][:16]
+        )
+        await ev.respond(resumo, buttons=[
+            [Button.inline("▶ Deploy agora", ("adm_deploy|"+nome_bot).encode()),
+             Button.inline("✅ Salvar sem deploy", ("adm_nodeploy|"+nome_bot).encode())],
+            [Button.inline(E_VOLTAR+" Admin", b"adm_menu")],
+        ])
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -944,22 +1448,25 @@ async def callback(ev):
     elif d == b"m_toggle":    PAUSADO=not PAUSADO; await ev.edit(painel_txt(), buttons=kb_principal()); await ev.answer("PAUSADO!" if PAUSADO else "RETOMADO!", alert=True)
     elif d == b"m_silencioso":MODO_SILENCIOSO=not MODO_SILENCIOSO; await ev.edit(painel_txt(), buttons=kb_principal()); await ev.answer("Silencioso ON" if MODO_SILENCIOSO else "Silencioso OFF", alert=True)
 
-    # ── IA ────────────────────────────────────────────────────────────────
+    # ── IA ─────────────────────────────────────────────────────────────────
     elif d == b"m_ia":        await ev.edit(ia_config_texto(), buttons=kb_ia())
     elif d == b"ia_toggle":
         IA_CONFIG["ativo"]=not IA_CONFIG["ativo"]; await ev.edit(ia_config_texto(), buttons=kb_ia())
         await ev.answer("IA ATIVADA!" if IA_CONFIG["ativo"] else "IA DESATIVADA!", alert=True)
     elif d == b"ia_img_toggle":
-        if not IA_CONFIG["img_logo"]: await ev.answer("Envie logo primeiro! Use /logo", alert=True); return
         if not _pillow_ok(): await ev.answer("Pillow nao instalada.", alert=True); return
         IA_CONFIG["img_ativo"]=not IA_CONFIG["img_ativo"]; await ev.edit(ia_config_texto(), buttons=kb_ia())
         await ev.answer("IA IMAGEM ON!" if IA_CONFIG["img_ativo"] else "IA IMAGEM OFF", alert=True)
     elif d == b"ia_img_menu": await ev.edit(ia_img_texto(), buttons=kb_ia_img())
+    elif d == b"ia_img_efeitos": await ev.edit(ia_img_efeitos_texto(), buttons=kb_ia_img_efeitos())
     elif d.startswith(b"ia_prov|"):
         IA_CONFIG["provedor"]=d.decode().split("|")[1]; await ev.edit(ia_config_texto(), buttons=kb_ia())
     elif d.startswith(b"ia_modo|"):
         m=d.decode().split("|")[1]; IA_CONFIG["modo"]=m
-        if m!="personalizado": IA_CONFIG["prompt"]=PROMPTS_PADRAO[m]
+        if m in PROMPTS_PADRAO and m not in ("personalizado","personalizado_2","personalizado_3"):
+            IA_CONFIG["prompt"]=PROMPTS_PADRAO[m]
+        elif m in ("personalizado_2","personalizado_3") and PROMPTS_PADRAO.get(m):
+            IA_CONFIG["prompt"]=PROMPTS_PADRAO[m]
         await ev.edit(ia_config_texto(), buttons=kb_ia()); await ev.answer("Modo: "+m)
     elif d.startswith(b"ia_key|"):
         AGUARDANDO[uid]="ia_key_"+d.decode().split("|")[1]
@@ -967,11 +1474,15 @@ async def callback(ev):
     elif d.startswith(b"ia_model|"):
         p=d.decode().split("|")[1]; AGUARDANDO[uid]="ia_model_"+p
         await ev.answer("Modelo atual: "+(IA_CONFIG["modelo_oai"] if p=="openai" else IA_CONFIG["modelo_gem"])+"\nDigite o novo:", alert=True)
-    elif d == b"ia_prompt":  AGUARDANDO[uid]="ia_prompt"; await ev.answer("Digite o prompt:", alert=True)
+    elif d == b"ia_prompt":  AGUARDANDO[uid]="ia_prompt"; await ev.answer("Digite o prompt para [personalizado]:", alert=True)
+    elif d == b"ia_prompt_c2": AGUARDANDO[uid]="ia_prompt_c2"; await ev.answer("Digite o prompt para Custom 2:", alert=True)
+    elif d == b"ia_prompt_c3": AGUARDANDO[uid]="ia_prompt_c3"; await ev.answer("Digite o prompt para Custom 3:", alert=True)
+    elif d == b"ia_nome_c2": AGUARDANDO[uid]="ia_nome_c2"; await ev.answer("Digite o nome para Custom 2:", alert=True)
+    elif d == b"ia_nome_c3": AGUARDANDO[uid]="ia_nome_c3"; await ev.answer("Digite o nome para Custom 3:", alert=True)
     elif d == b"ia_ver":     await ev.edit(ia_config_texto(), buttons=[[Button.inline(E_VOLTAR+" Voltar",b"m_ia")]])
     elif d == b"ia_test":    AGUARDANDO[uid]="ia_test"; await ev.answer("Digite mensagem de teste:", alert=True)
 
-    # ── IA Imagem ─────────────────────────────────────────────────────────
+    # ── IA Imagem ──────────────────────────────────────────────────────────
     elif d.startswith(b"img_pos|"):
         IA_CONFIG["img_posicao"]=d.decode().split("|")[1]; await ev.edit(ia_img_texto(), buttons=kb_ia_img())
     elif d == b"img_escala":     AGUARDANDO[uid]="img_escala";    await ev.answer("Escala % (1-80). Atual: "+str(IA_CONFIG["img_escala"]),    alert=True)
@@ -984,16 +1495,133 @@ async def callback(ev):
         IA_CONFIG["img_logo"]=b""; IA_CONFIG["img_logo_nome"]=""; IA_CONFIG["img_ativo"]=False
         await ev.edit(ia_img_texto(), buttons=kb_ia_img()); await ev.answer("Logo removida.", alert=True)
     elif d == b"img_testar":
-        if not IA_CONFIG["img_logo"]: await ev.answer("Envie logo primeiro! Use /logo", alert=True); return
         AGUARDANDO[uid]="img_testar"; await ev.answer("Envie uma foto para testar!", alert=True)
+    # Efeitos de imagem
+    elif d.startswith(b"img_filtro|"):
+        IA_CONFIG["img_filtro"] = d.decode().split("|")[1]
+        await ev.edit(ia_img_efeitos_texto(), buttons=kb_ia_img_efeitos())
+        await ev.answer("Filtro: " + IA_CONFIG["img_filtro"])
+    elif d == b"img_txt_toggle":
+        IA_CONFIG["img_texto_ativo"] = not IA_CONFIG.get("img_texto_ativo", False)
+        await ev.edit(ia_img_efeitos_texto(), buttons=kb_ia_img_efeitos())
+        await ev.answer("Texto ON" if IA_CONFIG["img_texto_ativo"] else "Texto OFF", alert=True)
+    elif d == b"img_txt_editar":
+        AGUARDANDO[uid] = "img_txt_editar"
+        await ev.answer("Digite o texto a sobrepor na imagem:", alert=True)
+    elif d == b"img_txt_cor":
+        AGUARDANDO[uid] = "img_txt_cor"
+        await ev.answer("Cor do texto em hex (ex: #FFFFFF). Atual: " + IA_CONFIG.get("img_texto_cor","#FFFFFF"), alert=True)
+    elif d == b"img_txt_tamanho":
+        AGUARDANDO[uid] = "img_txt_tamanho"
+        await ev.answer("Tamanho do texto em px (8-200). Atual: " + str(IA_CONFIG.get("img_texto_tamanho",24)), alert=True)
+    elif d == b"img_borda_toggle":
+        IA_CONFIG["img_borda_ativo"] = not IA_CONFIG.get("img_borda_ativo", False)
+        await ev.edit(ia_img_efeitos_texto(), buttons=kb_ia_img_efeitos())
+        await ev.answer("Borda ON" if IA_CONFIG["img_borda_ativo"] else "Borda OFF", alert=True)
+    elif d == b"img_borda_cor":
+        AGUARDANDO[uid] = "img_borda_cor"
+        await ev.answer("Cor da borda em hex (ex: #000000). Atual: " + IA_CONFIG.get("img_borda_cor","#000000"), alert=True)
+    elif d == b"img_borda_espessura":
+        AGUARDANDO[uid] = "img_borda_espessura"
+        await ev.answer("Espessura da borda px (1-100). Atual: " + str(IA_CONFIG.get("img_borda_espessura",5)), alert=True)
 
-    # ── Tipo selector ─────────────────────────────────────────────────────
+    # ── Admin de Revenda ────────────────────────────────────────────────────
+    elif d == b"adm_menu":
+        await ev.edit(admin_txt(), buttons=kb_admin())
+    elif d == b"adm_criar":
+        AGUARDANDO[uid] = "adm_nome"
+        await ev.answer("Digite um nome único para o bot (ex: cliente1):", alert=True)
+    elif d == b"adm_listar":
+        if not RESELLER_BOTS:
+            await ev.edit("📋 Nenhum bot cadastrado.", buttons=[[Button.inline(E_VOLTAR+" Voltar",b"adm_menu")]])
+        else:
+            linhas = []
+            for nome, cfg in RESELLER_BOTS.items():
+                status_icon = "▶" if cfg.get("ativo") else "⏹"
+                linhas.append([Button.inline(status_icon + " " + nome, ("adm_bot|"+nome).encode())])
+            linhas.append([Button.inline(E_VOLTAR+" Voltar", b"adm_menu")])
+            await ev.edit("📋 BOTS CADASTRADOS (" + str(len(RESELLER_BOTS)) + "):", buttons=linhas)
+    elif d.startswith(b"adm_bot|"):
+        nome_bot = d.decode().split("|",1)[1]
+        if nome_bot not in RESELLER_BOTS:
+            await ev.answer("Bot não encontrado.", alert=True); return
+        cfg = RESELLER_BOTS[nome_bot]
+        info = (
+            "🤖 BOT: " + nome_bot + "\n" + "="*20 + "\n"
+            "Estado : " + ("▶ Ativo" if cfg.get("ativo") else "⏹ Parado") + "\n"
+            "Token  : ***" + cfg.get("token","")[-8:] + "\n"
+            "Cont.  : " + (cfg.get("container","") or "não implantado") + "\n"
+            "Criado : " + cfg.get("criado","")[:16]
+        )
+        await ev.edit(info, buttons=kb_admin_bot(nome_bot))
+    elif d.startswith(b"adm_op|"):
+        parts = d.decode().split("|")
+        op, nome_bot = parts[1], parts[2]
+        msg_p = await ev.edit("⏳ Executando " + op + " em userbot-" + nome_bot + "...")
+        resultado = await bot_op(nome_bot, op)
+        if op == "rm" and nome_bot in RESELLER_BOTS:
+            RESELLER_BOTS[nome_bot]["ativo"] = False
+            RESELLER_BOTS[nome_bot]["container"] = ""
+        elif op == "start" and nome_bot in RESELLER_BOTS:
+            RESELLER_BOTS[nome_bot]["ativo"] = True
+        elif op == "stop" and nome_bot in RESELLER_BOTS:
+            RESELLER_BOTS[nome_bot]["ativo"] = False
+        await ev.edit(
+            "⚙️ " + op.upper() + " → " + nome_bot + "\n" + "="*20 + "\n" + (resultado or "(sem saída)"),
+            buttons=kb_admin_bot(nome_bot) if nome_bot in RESELLER_BOTS else [[Button.inline(E_VOLTAR+" Admin",b"adm_menu")]]
+        )
+    elif d.startswith(b"adm_deploy|"):
+        nome_bot = d.decode().split("|",1)[1]
+        if nome_bot not in RESELLER_BOTS:
+            await ev.answer("Bot não encontrado.", alert=True); return
+        await ev.edit("⏳ Fazendo deploy do bot " + nome_bot + "...")
+        ok, out = await deploy_bot_filho(nome_bot, RESELLER_BOTS[nome_bot])
+        if ok:
+            RESELLER_BOTS[nome_bot]["ativo"] = True
+            RESELLER_BOTS[nome_bot]["container"] = out
+            await ev.edit(
+                E_OK + " Deploy concluído!\nContêiner: " + out,
+                buttons=kb_admin_bot(nome_bot)
+            )
+        else:
+            await ev.edit(
+                E_FECHAR + " Erro no deploy:\n" + out,
+                buttons=[[Button.inline(E_VOLTAR+" Admin", b"adm_menu")]]
+            )
+    elif d.startswith(b"adm_nodeploy|"):
+        nome_bot = d.decode().split("|",1)[1]
+        await ev.edit(
+            E_OK + " Bot " + nome_bot + " salvo sem deploy.\nUse o painel para implantá-lo depois.",
+            buttons=kb_admin()
+        )
+    elif d == b"adm_limites":
+        await ev.edit(
+            "⚙️ LIMITES PADRÃO\n" + "="*20 + "\n"
+            "Max destinos: " + str(RESELLER_LIMITE["max_destinos"]) + "\n"
+            "Max origens : " + str(RESELLER_LIMITE["max_origens"]) + "\n"
+            "IA permitida: " + ("SIM" if RESELLER_LIMITE["ia_permitida"] else "NAO") + "\n"
+            "Expira em   : " + (RESELLER_LIMITE["expira_em"] or "sem expiração"),
+            buttons=[[Button.inline(E_VOLTAR+" Voltar", b"adm_menu")]]
+        )
+    elif d in (b"adm_sel_start",b"adm_sel_stop",b"adm_sel_restart",b"adm_sel_logs",b"adm_sel_rm"):
+        op_map = {b"adm_sel_start":"start",b"adm_sel_stop":"stop",
+                  b"adm_sel_restart":"restart",b"adm_sel_logs":"logs",b"adm_sel_rm":"rm"}
+        op = op_map[d]
+        if not RESELLER_BOTS:
+            await ev.answer("Nenhum bot cadastrado.", alert=True); return
+        linhas = []
+        for nome in RESELLER_BOTS:
+            linhas.append([Button.inline(nome, ("adm_op|"+op+"|"+nome).encode())])
+        linhas.append([Button.inline(E_VOLTAR+" Voltar", b"adm_menu")])
+        await ev.edit("Selecione o bot para " + op + ":", buttons=linhas)
+
+    # ── Tipo selector ──────────────────────────────────────────────────────
     elif d in (b"src|tipo",b"src_rem|tipo",b"src_ign|tipo",b"dst|tipo",b"dst_rem|tipo"):
         ctx=d.decode().split("|")[0]
         lm={"src":"ADICIONAR ORIGEM","src_rem":"REMOVER ORIGEM","src_ign":"IGNORAR CHAT","dst":"ADICIONAR DESTINO","dst_rem":"REMOVER DESTINO"}
         await ev.edit(lm.get(ctx,"SELECIONAR")+"\n"+"="*20+"\nEscolha o tipo:", buttons=kb_tipo_selector(ctx))
 
-    # ── Paginação ─────────────────────────────────────────────────────────
+    # ── Paginação ──────────────────────────────────────────────────────────
     elif b"|pg|" in d:
         p=d.decode().split("|"); ctx,cat,pag=p[0],p[2],int(p[3])
         await ev.answer("Carregando...", alert=False)
@@ -1001,7 +1629,7 @@ async def callback(ev):
         if not items: await ev.answer("Nenhum "+cat+" encontrado.", alert=True); return
         await ev.edit(cat.upper()+" ("+str(len(items))+") — pag "+str(pag+1)+"\nSelecione:", buttons=kb_lista_chats(items,ctx,cat,pag))
 
-    # ── Seleção ───────────────────────────────────────────────────────────
+    # ── Seleção ────────────────────────────────────────────────────────────
     elif d.count(b"|")>=3 and d.split(b"|")[1]==b"sel":
         p=d.decode().split("|"); ctx,cid,cat=p[0],int(p[2]),p[3]
         dialogs=await get_dialogs_safe(); all_i=[i for its in dialogs.values() for i in its]
@@ -1017,18 +1645,18 @@ async def callback(ev):
             bts.append([Button.inline(E_VOLTAR+" Voltar",bc.encode()),Button.inline(E_HOME+" Menu",b"m_back")])
             await ev.edit(titulo+"\n"+"="*20+"\n"+nome+"\nID: "+str(cid), buttons=bts)
 
-    # ── Voltar listas ─────────────────────────────────────────────────────
+    # ── Voltar listas ──────────────────────────────────────────────────────
     elif b"|back" in d:
         ctx=d.decode().split("|")[0]
         if ctx in ("src","src_rem","src_ign"): await ev.edit(E_ORIGEM+" ORIGENS",  buttons=kb_origens())
         elif ctx in ("dst","dst_rem"):          await ev.edit(E_DESTINO+" DESTINOS",buttons=kb_destinos())
         else: await ev.edit(E_ID+" DESCOBRIR ID", buttons=[[Button.inline(E_VOLTAR+" Menu",b"m_back")]])
 
-    # ── Manual ────────────────────────────────────────────────────────────
+    # ── Manual ─────────────────────────────────────────────────────────────
     elif b"|manual" in d and not d.startswith(b"disc"):
         AGUARDANDO[uid]=d.decode().split("|")[0]+"|manual"; await ev.answer("Digite o @username ou ID:", alert=True)
 
-    # ── Lista por tipo ────────────────────────────────────────────────────
+    # ── Lista por tipo ──────────────────────────────────────────────────────
     elif (b"|" in d and d.split(b"|")[1] in (b"user",b"premium",b"bot",b"mygroup",b"mychannel",b"myforum")
           and not d.startswith(b"disc")):
         p=d.decode().split("|"); ctx,cat=p[0],p[1]
@@ -1037,7 +1665,7 @@ async def callback(ev):
         if not items: await ev.answer("Nenhum "+cat+" encontrado.", alert=True); return
         await ev.edit(cat.upper()+" ("+str(len(items))+") — pag 1\nSelecione:", buttons=kb_lista_chats(items,ctx,cat,0))
 
-    # ── Descobrir ID ──────────────────────────────────────────────────────
+    # ── Descobrir ID ───────────────────────────────────────────────────────
     elif d == b"disc_menu":
         await ev.edit(E_ID+" DESCOBRIR ID\n"+"="*20+"\nEscolha o tipo:", buttons=[
             [Button.inline(E_USER+   " User",   b"disc|user|0"),
@@ -1062,7 +1690,7 @@ async def callback(ev):
         if item: await ev.answer(item["name"]+(("  @"+item["username"]) if item.get("username") else "")+"\nID: "+str(cid), alert=True)
         else: await ev.answer("ID: "+str(cid), alert=True)
 
-    # ── Modo ──────────────────────────────────────────────────────────────
+    # ── Modo ───────────────────────────────────────────────────────────────
     elif d==b"mo_fwd":  MOD="forward"; await ev.edit(E_MODO+" Modo: FORWARD", buttons=kb_modo())
     elif d==b"mo_copy": MOD="copy";    await ev.edit(E_MODO+" Modo: COPY",    buttons=kb_modo())
     elif d==b"mo_bots": SEM_BOTS=not SEM_BOTS; await ev.edit(E_MODO+" MODO", buttons=kb_modo())
@@ -1070,7 +1698,7 @@ async def callback(ev):
     elif d==b"mo_tipos":     await ev.edit(E_FILTRO+" Tipos de midia:", buttons=kb_tipos())
     elif d==b"mo_tipos_back":await ev.edit(E_MODO+" MODO", buttons=kb_modo())
 
-    # ── Tipos ─────────────────────────────────────────────────────────────
+    # ── Tipos ──────────────────────────────────────────────────────────────
     elif d.startswith(b"tp_"):
         t=d.decode()[3:]
         if t=="clear": SOMENTE_TIPOS.clear()
@@ -1078,7 +1706,7 @@ async def callback(ev):
         else: SOMENTE_TIPOS.add(t)
         await ev.edit(E_FILTRO+" Tipos:", buttons=kb_tipos())
 
-    # ── Filtros ───────────────────────────────────────────────────────────
+    # ── Filtros ────────────────────────────────────────────────────────────
     elif d==b"f_add_on":  AGUARDANDO[uid]="f_add_on";  await ev.answer("Palavra a exigir:",   alert=True)
     elif d==b"f_add_off": AGUARDANDO[uid]="f_add_off"; await ev.answer("Palavra a bloquear:", alert=True)
     elif d==b"f_rem":     AGUARDANDO[uid]="f_rem";     await ev.answer("Palavra a remover:",  alert=True)
@@ -1087,7 +1715,7 @@ async def callback(ev):
                       buttons=[[Button.inline(E_VOLTAR+" Voltar",b"m_filtros")]])
     elif d==b"f_clear": FILTROS_ON.clear(); FILTROS_OFF.clear(); await ev.edit(E_FILTRO+" Limpos.", buttons=kb_filtros())
 
-    # ── Mensagem ──────────────────────────────────────────────────────────
+    # ── Mensagem ───────────────────────────────────────────────────────────
     elif d==b"mg_prefix": AGUARDANDO[uid]="mg_prefix"; await ev.answer("Digite o prefixo:", alert=True)
     elif d==b"mg_suffix": AGUARDANDO[uid]="mg_suffix"; await ev.answer("Digite o rodape:",  alert=True)
     elif d==b"mg_rmpre":  PREFIXO=""; await ev.edit(E_MSG+" Prefixo removido.", buttons=kb_msg())
@@ -1096,27 +1724,27 @@ async def callback(ev):
         await ev.edit(E_MSG+" CONFIG\n"+"="*20+"\nPrefixo: "+(PREFIXO or "nenhum")+"\nRodape: "+(RODAPE or "nenhum"),
                       buttons=[[Button.inline(E_VOLTAR+" Voltar",b"m_msg")]])
 
-    # ── Agendamento ───────────────────────────────────────────────────────
+    # ── Agendamento ────────────────────────────────────────────────────────
     elif d==b"ag_set":    AGUARDANDO[uid]="ag_set"; await ev.answer("HH:MM HH:MM (inicio fim)", alert=True)
     elif d==b"ag_toggle": AGENDAMENTO["ativo"]=not AGENDAMENTO["ativo"]; await ev.edit(E_HORARIO+" Agendamento: "+("ATIVO" if AGENDAMENTO["ativo"] else "INATIVO"), buttons=kb_agenda())
     elif d==b"ag_ver":
         await ev.edit(E_HORARIO+" HORARIO\n"+"="*20+"\nEstado: "+("ATIVO" if AGENDAMENTO["ativo"] else "INATIVO")+"\nJanela: "+AGENDAMENTO["inicio"]+" ate "+AGENDAMENTO["fim"],
                       buttons=[[Button.inline(E_VOLTAR+" Voltar",b"m_agenda")]])
 
-    # ── Origens extras ────────────────────────────────────────────────────
+    # ── Origens extras ─────────────────────────────────────────────────────
     elif d==b"o_des":   IGNORADOS.clear(); await ev.edit(E_OK+" Todos designorados.", buttons=kb_origens())
     elif d==b"o_list":
         await ev.edit(E_ORIGEM+" ORIGENS\n"+"="*20+"\n"+(", ".join(str(x) for x in SRC) if SRC else "todos"),
                       buttons=[[Button.inline(E_VOLTAR+" Voltar",b"m_origens")]])
     elif d==b"o_clear": SRC.clear(); IGNORADOS.clear(); await ev.edit(E_LIMPAR+" Limpos.", buttons=kb_origens())
 
-    # ── Destinos extras ───────────────────────────────────────────────────
+    # ── Destinos extras ────────────────────────────────────────────────────
     elif d==b"d_list":
         await ev.edit(E_DESTINO+" DESTINOS\n"+"="*20+"\n"+(", ".join(str(x) for x in DESTINOS) if DESTINOS else "nenhum"),
                       buttons=[[Button.inline(E_VOLTAR+" Voltar",b"m_destinos")]])
     elif d==b"d_clear": DESTINOS.clear(); await ev.edit(E_LIMPAR+" Destinos limpos.", buttons=kb_destinos())
 
-    # ── Info ──────────────────────────────────────────────────────────────
+    # ── Info ───────────────────────────────────────────────────────────────
     elif d==b"i_ping":  await ev.answer("Pong! " + str(round((time.time())*1000%1000)) + "ms")
     elif d==b"i_id":    await ev.answer("Chat ID: "+str(ev.chat_id), alert=True)
     elif d==b"i_stats": await ev.edit(status_texto(), buttons=[[Button.inline(E_VOLTAR+" Voltar",b"m_info")]])
@@ -1183,13 +1811,20 @@ async def handler(event):
         # IA imagem
         img_processada = None
         ia_img_ok      = False
-        if IA_CONFIG["img_ativo"] and IA_CONFIG["img_logo"] and event.message.photo:
-            try:
-                img_bytes      = await event.download_media(bytes)
-                img_processada = processar_imagem(img_bytes)
-                if img_processada: ia_img_ok = True
-            except Exception as e:
-                logger.error("[IA-IMG] Download/proc: %s", e)
+        if IA_CONFIG["img_ativo"] and event.message.photo:
+            tem_efeito = (
+                IA_CONFIG.get("img_logo") or
+                IA_CONFIG.get("img_filtro","nenhum") != "nenhum" or
+                IA_CONFIG.get("img_texto_ativo") or
+                IA_CONFIG.get("img_borda_ativo")
+            )
+            if tem_efeito:
+                try:
+                    img_bytes      = await event.download_media(bytes)
+                    img_processada = processar_imagem(img_bytes)
+                    if img_processada: ia_img_ok = True
+                except Exception as e:
+                    logger.error("[IA-IMG] Download/proc: %s", e)
 
         def montar(base):
             pts = [x for x in [PREFIXO, base, RODAPE] if x]
@@ -1256,6 +1891,7 @@ async def main():
                 IA_CONFIG["provedor"] if IA_CONFIG["ativo"]    else "OFF",
                 "ON"                  if IA_CONFIG["img_ativo"] else "OFF")
     asyncio.create_task(get_dialogs())
+    await registrar_menu_comandos()
     await asyncio.gather(
         userbot.run_until_disconnected(),
         bot.run_until_disconnected(),
