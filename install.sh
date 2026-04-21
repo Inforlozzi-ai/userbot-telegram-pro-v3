@@ -5,7 +5,7 @@
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_RAW="https://raw.githubusercontent.com/Inforlozzi-ai/userbot-telegram-pro/main"
+REPO_RAW="https://raw.githubusercontent.com/Inforlozzi-ai/userbot-telegram-pro-v3/main"
 
 pausar() { echo ""; read -p "  Pressione ENTER para continuar..." x; }
 limpar() { clear; }
@@ -44,7 +44,7 @@ menu_principal() {
   echo -e "  ${CYAN}[3]${NC} 🗑  Desinstalar bot"
   echo -e "  ${CYAN}[4]${NC} 📊 Ver logs em tempo real"
   echo -e "  ${CYAN}[5]${NC} 🔁 Regerar Session String de um bot"
-  echo -e "  ${CYAN}[6]${NC} 🔄 Atualizar bot.py (baixar versão mais recente)"
+  echo -e "  ${CYAN}[6]${NC} 🔄 Atualizar TODOS os bots (baixa e reinicia tudo)"
   echo -e "  ${CYAN}[7]${NC} 🧠 Configurar IA de um bot (OpenAI / Gemini)"
   echo -e "  ${CYAN}[8]${NC} 🧹 Limpar tudo (todos os bots)"
   echo -e "  ${CYAN}[9]${NC} ❌ Sair"
@@ -315,33 +315,96 @@ regerar_session() {
   pausar; menu_principal
 }
 
-# ── ATUALIZAR BOT.PY ───────────────────────────────────────
+# ── ATUALIZAR TODOS OS BOTS ────────────────────────────────
 atualizar_botpy() {
   titulo
-  selecionar_bot "Atualizar bot.py de qual bot?"
-  [ -z "$SELECTED_BOT" ] && return
+  echo -e "  ${BOLD}🔄 ATUALIZAR TODOS OS BOTS${NC}\n"
 
-  INSTALL_DIR="/opt/$SELECTED_BOT"
-  echo -e "\n  ${BOLD}🔄 Atualizando bot.py de ${CYAN}$SELECTED_BOT${NC}\n"
-
-  if curl -fsSL "$REPO_RAW/bot.py" -o "$INSTALL_DIR/bot.py.new" 2>/dev/null; then
-    mv "$INSTALL_DIR/bot.py.new" "$INSTALL_DIR/bot.py"
-    echo -e "  ${GREEN}✅ bot.py atualizado do repositório!${NC}"
-  elif [ -f "$SCRIPT_DIR/bot.py" ]; then
-    cp "$SCRIPT_DIR/bot.py" "$INSTALL_DIR/bot.py"
-    echo -e "  ${GREEN}✅ bot.py atualizado da pasta local!${NC}"
+  # Baixar o bot.py mais recente do repositório
+  TMP_BOTPY="/tmp/bot.py.update"
+  echo -e "  📥 Baixando bot.py mais recente..."
+  if ! curl -fsSL "$REPO_RAW/bot.py" -o "$TMP_BOTPY" 2>/dev/null; then
+    echo -e "  ${RED}❌ Falha ao baixar do repositório: $REPO_RAW${NC}"
+    if [ -f "$SCRIPT_DIR/bot.py" ]; then
+      cp "$SCRIPT_DIR/bot.py" "$TMP_BOTPY"
+      echo -e "  ${YELLOW}⚠️  Usando bot.py da pasta local.${NC}"
+    else
+      echo -e "  ${RED}❌ Nenhuma fonte disponível. Abortando.${NC}"
+      rm -f "$TMP_BOTPY"; pausar; menu_principal; return
+    fi
   else
-    echo -e "  ${RED}❌ Não foi possível baixar o bot.py.${NC}"
-    pausar; menu_principal; return
+    echo -e "  ${GREEN}✅ bot.py baixado com sucesso!${NC}"
   fi
 
-  docker restart "$SELECTED_BOT" && \
-    echo -e "  ${GREEN}✅ Container reiniciado!${NC}" || \
-    echo -e "  ${RED}❌ Erro ao reiniciar.${NC}"
+  # Listar todos os bots instalados
+  bots=($(docker ps -a --format "{{.Names}}" 2>/dev/null | grep "^userbot-"))
+  if [ ${#bots[@]} -eq 0 ]; then
+    echo -e "\n  ${YELLOW}Nenhum bot instalado para atualizar.${NC}"
+    rm -f "$TMP_BOTPY"; pausar; menu_principal; return
+  fi
 
-  echo -e "\n  ⏳ Aguardando 10s..."
-  sleep 10
-  docker logs "$SELECTED_BOT" 2>&1 | tail -15
+  echo -e "\n  ${BOLD}Bots encontrados: ${#bots[@]}${NC}\n"
+  for nome in "${bots[@]}"; do
+    status=$(docker inspect --format='{{.State.Status}}' "$nome" 2>/dev/null)
+    icon="🔴"; [ "$status" = "running" ] && icon="🟢"
+    echo -e "    $icon  $nome  ($status)"
+  done
+
+  echo ""
+  read -p "  Atualizar todos agora? [s/N]: " conf
+  if [[ ! "$conf" =~ ^[sS]$ ]]; then
+    echo -e "  ${YELLOW}Cancelado.${NC}"
+    rm -f "$TMP_BOTPY"; pausar; menu_principal; return
+  fi
+
+  echo ""
+  OK=0; FAIL=0
+
+  for nome in "${bots[@]}"; do
+    INSTALL_DIR="/opt/$nome"
+    echo -e "  ─────────────────────────────────────────"
+    echo -e "  📦 ${CYAN}$nome${NC}"
+
+    # Copiar o novo bot.py para a pasta do bot
+    if cp "$TMP_BOTPY" "$INSTALL_DIR/bot.py" 2>/dev/null; then
+      echo -e "  ${GREEN}✅ bot.py atualizado${NC}"
+    else
+      echo -e "  ${RED}❌ Falha ao copiar bot.py para $INSTALL_DIR${NC}"
+      ((FAIL++))
+      continue
+    fi
+
+    # Reiniciar o container
+    if docker restart "$nome" >/dev/null 2>&1; then
+      echo -e "  ${GREEN}✅ Container reiniciado${NC}"
+      ((OK++))
+    else
+      echo -e "  ${RED}❌ Falha ao reiniciar o container${NC}"
+      ((FAIL++))
+    fi
+  done
+
+  rm -f "$TMP_BOTPY"
+
+  echo -e "\n  ─────────────────────────────────────────"
+  echo -e "  ⏳ Aguardando inicialização (15s)..."
+  sleep 15
+
+  echo -e "\n  ${BOLD}📊 RESULTADO${NC}"
+  echo -e "  ${GREEN}✅ Atualizados: $OK${NC}"
+  [ $FAIL -gt 0 ] && echo -e "  ${RED}❌ Falhas: $FAIL${NC}"
+  echo ""
+
+  # Mostrar status final de todos
+  for nome in "${bots[@]}"; do
+    status=$(docker inspect --format='{{.State.Status}}' "$nome" 2>/dev/null)
+    icon="🔴"; [ "$status" = "running" ] && icon="🟢"
+    uptime=$(docker inspect --format='{{.State.StartedAt}}' "$nome" 2>/dev/null | cut -dT -f1)
+    echo -e "    $icon  $nome  ($status)"
+  done
+
+  echo ""
+  echo -e "  ${YELLOW}Use a opção [4] Ver logs para confirmar que reiniciaram sem erros.${NC}"
   pausar; menu_principal
 }
 
