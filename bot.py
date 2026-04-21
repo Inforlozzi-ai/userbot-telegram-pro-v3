@@ -307,7 +307,7 @@ def _hex_to_rgb(hex_color: str):
 
 
 def processar_imagem(img_bytes: bytes):
-    """Aplica filtros, texto e logo sobre a imagem recebida. Retorna bytes JPEG ou None."""
+    """Aplica filtros, texto e logo sobre a imagem recebida. Retorna BytesIO PNG ou None."""
     try:
         from PIL import Image, ImageEnhance, ImageDraw, ImageFont, ImageOps
 
@@ -397,10 +397,12 @@ def processar_imagem(img_bytes: bytes):
             overlay.paste(logo, pos, logo)
             base = Image.alpha_composite(base, overlay)
 
-        resultado = base.convert("RGB")
+        # Salvar como PNG — sem perda, compatível com todos os modos do Telegram
         buf = io.BytesIO()
-        resultado.save(buf, format="JPEG", quality=92)
-        return buf.getvalue()
+        base.convert("RGB").save(buf, format="PNG")
+        buf.seek(0)
+        buf.name = "imagem.png"   # nome obriga o Telegram a tratar como foto válida
+        return buf
     except Exception as e:
         logger.error("[IA-IMG] %s", e)
         return None
@@ -1386,6 +1388,7 @@ async def entrada_usuario(ev):
                 img_bytes = await ev.download_media(bytes)
                 res = processar_imagem(img_bytes)
                 if res:
+                    res.seek(0)
                     await bot.send_file(ev.chat_id, res, caption=E_OK + " Resultado com efeitos aplicados")
                     await msg_p.delete()
                 else:
@@ -2071,6 +2074,7 @@ async def handler(event):
         for dst in DESTINOS:
             try:
                 if ia_img_ok and img_processada:
+                    img_processada.seek(0)  # rebobina para cada destino
                     await userbot.send_file(dst, img_processada,
                                             caption=montar(texto_final) or "",
                                             force_document=False)
