@@ -16,6 +16,9 @@ export class ResellerClient {
   @JoinColumn({ name: 'clientId' })
   client: User;
 
+  @Column({ type: 'decimal', default: 20 })
+  commissionPct: number;
+
   @Column({ type: 'decimal', default: 0 })
   totalRevenue: number;
 
