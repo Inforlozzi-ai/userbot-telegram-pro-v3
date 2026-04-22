@@ -57,7 +57,7 @@ services:
       - traefik.http.routers.inforlozzi-api.rule=Host(`${DOMAIN}`) && (PathPrefix(`/api`) || PathPrefix(`/webhooks`))
       - traefik.http.routers.inforlozzi-api.entrypoints=websecure
       - traefik.http.routers.inforlozzi-api.tls=true
-      - traefik.http.routers.inforlozzi-api.tls.certresolver=le
+      - traefik.http.routers.inforlozzi-api.tls.certresolver=letsencrypt
       - traefik.http.services.inforlozzi-api.loadbalancer.server.port=3001
 
   web:
@@ -80,7 +80,7 @@ services:
       - traefik.http.routers.inforlozzi-web.rule=Host(`${DOMAIN}`)
       - traefik.http.routers.inforlozzi-web.entrypoints=websecure
       - traefik.http.routers.inforlozzi-web.tls=true
-      - traefik.http.routers.inforlozzi-web.tls.certresolver=le
+      - traefik.http.routers.inforlozzi-web.tls.certresolver=letsencrypt
       - traefik.http.services.inforlozzi-web.loadbalancer.server.port=3000
 
 volumes:
