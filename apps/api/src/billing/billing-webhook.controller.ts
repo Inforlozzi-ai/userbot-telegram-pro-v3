@@ -10,7 +10,6 @@ export class BillingWebhookController {
       throw new UnauthorizedException('Token inválido');
     }
     this.logger.log(`Webhook Asaas: ${body.event}`);
-    // TODO: processar PAYMENT_CONFIRMED, PAYMENT_OVERDUE, etc.
     return { received: true };
   }
 }

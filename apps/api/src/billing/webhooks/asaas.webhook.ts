@@ -24,36 +24,22 @@ export class AsaasWebhookController {
     if (token !== process.env.ASAAS_WEBHOOK_TOKEN) {
       throw new UnauthorizedException('Token inválido');
     }
-
     const event = body.event;
     const payment = body.payment;
-
     this.logger.log(`Asaas webhook: ${event} | payment: ${payment?.id}`);
-
     if (!['PAYMENT_RECEIVED', 'PAYMENT_CONFIRMED'].includes(event)) {
       return { ok: true };
     }
-
     const clientId = payment?.externalReference;
     if (!clientId) return { ok: true };
-
     const resellerClient = await this.clientRepo.findOne({
       where: { clientId, active: true },
     });
-
     if (!resellerClient) return { ok: true };
-
     const grossAmount = Number(payment.value || 0);
     const commissionPct = Number(resellerClient.commissionPct || 20);
     const commissionAmount = (grossAmount * commissionPct) / 100;
-
-    this.logger.log(
-      `Comissão registrada: reseller=${resellerClient.resellerId} | valor=R$${commissionAmount.toFixed(2)}`
-    );
-
-    // Notificação opcional (se o revendedor tiver telegram configurado)
-    // await this.notifications.send(telegramId, mensagem);
-
+    this.logger.log(`Comissão: reseller=${resellerClient.resellerId} | R$${commissionAmount.toFixed(2)}`);
     return { ok: true };
   }
 }

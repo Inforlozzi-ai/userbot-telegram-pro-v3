@@ -3,7 +3,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AsaasService } from './asaas.service';
 import { UsersService } from '../users/users.service';
 
-@Controller('api/billing')
+@Controller('billing')
 @UseGuards(JwtAuthGuard)
 export class UpgradeController {
   constructor(

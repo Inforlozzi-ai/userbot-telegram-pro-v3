@@ -2,7 +2,7 @@ import { Controller, Get, Post, Delete, Param, Body, UseGuards, Request } from '
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { BotsService } from './bots.service';
 
-@Controller('api/bots')
+@Controller('bots')
 @UseGuards(JwtAuthGuard)
 export class BotsController {
   constructor(private botsService: BotsService) {}
