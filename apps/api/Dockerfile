@@ -9,10 +9,11 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
-# Instalar Python3 e Telethon para o script de autenticacao
+# Instalar Python3 e Telethon para autenticacao Telegram
 RUN apk add --no-cache python3 py3-pip && \
     pip3 install telethon --break-system-packages
 
+COPY --from=builder /app/package*.json ./
 RUN npm install --omit=dev
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/scripts ./scripts
