@@ -19,7 +19,6 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-gray-950 text-white">
-      {/* Header */}
       <header className="flex items-center justify-between px-6 py-4 border-b border-gray-800">
         <div className="flex items-center gap-2">
           <span className="text-xl">🤖</span>
@@ -29,6 +28,7 @@ export default function Dashboard() {
           <Link href="/dashboard" className="text-white font-semibold">📊 Dashboard</Link>
           <Link href="/dashboard/bots" className="text-gray-400 hover:text-white">🤖 Bots</Link>
           <Link href="/dashboard/reseller" className="text-gray-400 hover:text-white">🏪 Revendedor</Link>
+          <Link href="/dashboard/admin/plans" className="text-gray-400 hover:text-white">🛡️ Admin</Link>
           <button
             onClick={() => { localStorage.removeItem('token'); window.location.href = '/login'; }}
             className="text-gray-500 hover:text-red-400">
@@ -37,12 +37,10 @@ export default function Dashboard() {
         </nav>
       </header>
 
-      {/* Conteúdo */}
       <main className="max-w-5xl mx-auto px-6 py-10">
         <h1 className="text-3xl font-bold mb-2">Dashboard</h1>
         <p className="text-gray-400 mb-8">Bem-vindo à sua plataforma de bots.</p>
 
-        {/* Cards rápidos */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
           <StatCard label="Total de bots" value={bots.length} icon="🤖" color="indigo" />
           <StatCard label="Bots ativos" value={bots.filter(b => b.status === 'running').length} icon="🟢" color="green" />
@@ -50,7 +48,6 @@ export default function Dashboard() {
           <StatCard label="Inativos" value={bots.filter(b => b.status === 'stopped').length} icon="⚪" color="gray" />
         </div>
 
-        {/* Lista rápida */}
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-bold">🤖 Seus bots</h2>
           <Link href="/dashboard/bots/new"
@@ -77,7 +74,7 @@ export default function Dashboard() {
                 className="bg-gray-900 border border-gray-800 rounded-2xl px-5 py-4 flex items-center justify-between hover:border-indigo-500 transition">
                 <div>
                   <p className="font-semibold">{bot.name}</p>
-                  <p className="text-gray-500 text-xs mt-0.5">{bot.slug}</p>
+                  <p className="text-gray-500 text-xs mt-0.5">{bot.phoneNumber}</p>
                 </div>
                 <div className="flex items-center gap-3">
                   <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
@@ -97,7 +94,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Atalhos */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-10">
           <Link href="/dashboard/reseller"
             className="bg-gray-900 border border-gray-800 rounded-2xl p-6 hover:border-indigo-500 transition">
@@ -105,11 +101,11 @@ export default function Dashboard() {
             <p className="font-bold">Painel Revendedor</p>
             <p className="text-gray-400 text-sm mt-1">Gerencie clientes e acompanhe comissões.</p>
           </Link>
-          <Link href="/dashboard/billing"
+          <Link href="/dashboard/admin/plans"
             className="bg-gray-900 border border-gray-800 rounded-2xl p-6 hover:border-indigo-500 transition">
-            <p className="text-2xl mb-2">💳</p>
-            <p className="font-bold">Plano & Assinatura</p>
-            <p className="text-gray-400 text-sm mt-1">Veja seu plano atual e faça upgrade.</p>
+            <p className="text-2xl mb-2">🛡️</p>
+            <p className="font-bold">Admin — Planos</p>
+            <p className="text-gray-400 text-sm mt-1">Gerencie planos e roles dos usuários.</p>
           </Link>
         </div>
       </main>

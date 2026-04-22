@@ -8,10 +8,12 @@ export default function BotsPage() {
   useAuth();
   const [bots, setBots] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState('');
+
+  const headers = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}` });
 
   const load = () => {
-    const token = localStorage.getItem('token');
-    axios.get('/api/bots', { headers: { Authorization: `Bearer ${token}` } })
+    axios.get('/api/bots', { headers: headers() })
       .then(r => setBots(r.data))
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -20,8 +22,15 @@ export default function BotsPage() {
   useEffect(() => { load(); }, []);
 
   const action = async (id: string, act: string) => {
-    const token = localStorage.getItem('token');
-    await axios.post(`/api/bots/${id}/${act}`, {}, { headers: { Authorization: `Bearer ${token}` } });
+    await axios.post(`/api/bots/${id}/${act}`, {}, { headers: headers() }).catch(() => {});
+    load();
+  };
+
+  const remove = async (id: string, name: string) => {
+    if (!confirm(`Excluir o bot "${name}"? O container será removido permanentemente.`)) return;
+    setDeleting(id);
+    await axios.delete(`/api/bots/${id}`, { headers: headers() }).catch(() => {});
+    setDeleting('');
     load();
   };
 
@@ -36,6 +45,7 @@ export default function BotsPage() {
           <Link href="/dashboard" className="text-gray-400 hover:text-white">📊 Dashboard</Link>
           <Link href="/dashboard/bots" className="text-white font-semibold">🤖 Bots</Link>
           <Link href="/dashboard/reseller" className="text-gray-400 hover:text-white">🏪 Revendedor</Link>
+          <Link href="/dashboard/admin/plans" className="text-gray-400 hover:text-white">🛡️ Admin</Link>
           <button onClick={() => { localStorage.removeItem('token'); window.location.href = '/login'; }} className="text-gray-500 hover:text-red-400">Sair</button>
         </nav>
       </header>
@@ -69,21 +79,35 @@ export default function BotsPage() {
               <div key={bot.id} className="bg-gray-900 border border-gray-800 rounded-2xl px-5 py-4 flex items-center justify-between hover:border-indigo-500 transition">
                 <div>
                   <p className="font-semibold">{bot.name}</p>
-                  <p className="text-gray-500 text-xs mt-0.5">@{bot.slug} • criado em {new Date(bot.createdAt).toLocaleDateString('pt-BR')}</p>
+                  <p className="text-gray-500 text-xs mt-0.5">
+                    {bot.phoneNumber} • {new Date(bot.createdAt).toLocaleDateString('pt-BR')}
+                  </p>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
                   <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                    bot.status === 'running' ? 'bg-green-500/20 text-green-400' :
-                    bot.status === 'error'   ? 'bg-red-500/20 text-red-400' :
+                    bot.status === 'running'      ? 'bg-green-500/20 text-green-400' :
+                    bot.status === 'error'        ? 'bg-red-500/20 text-red-400' :
+                    bot.status === 'provisioning' ? 'bg-yellow-500/20 text-yellow-400' :
                     'bg-gray-700 text-gray-400'
                   }`}>
-                    {bot.status === 'running' ? '🟢 Ativo' : bot.status === 'error' ? '🔴 Erro' : '⚪ Parado'}
+                    {bot.status === 'running' ? '🟢 Ativo' :
+                     bot.status === 'error'   ? '🔴 Erro' :
+                     bot.status === 'provisioning' ? '⏳ Provisionando' : '⚪ Parado'}
                   </span>
-                  {bot.status !== 'running' ?
-                    <button onClick={() => action(bot.id, 'start')} className="text-xs px-3 py-1.5 bg-green-600 hover:bg-green-500 rounded-lg">▶ Iniciar</button> :
-                    <button onClick={() => action(bot.id, 'stop')}  className="text-xs px-3 py-1.5 bg-yellow-600 hover:bg-yellow-500 rounded-lg">⏸ Parar</button>
+                  {bot.status !== 'running'
+                    ? <button onClick={() => action(bot.id, 'start')} className="text-xs px-3 py-1.5 bg-green-600 hover:bg-green-500 rounded-lg transition">▶ Iniciar</button>
+                    : <button onClick={() => action(bot.id, 'stop')}  className="text-xs px-3 py-1.5 bg-yellow-600 hover:bg-yellow-500 rounded-lg transition">⏸ Parar</button>
                   }
-                  <Link href={`/dashboard/bots/${bot.id}`} className="text-indigo-400 hover:text-indigo-300 text-sm">Gerenciar →</Link>
+                  <Link href={`/dashboard/bots/${bot.id}`}
+                    className="text-xs px-3 py-1.5 bg-indigo-700 hover:bg-indigo-600 rounded-lg transition">
+                    Gerenciar
+                  </Link>
+                  <button
+                    onClick={() => remove(bot.id, bot.name)}
+                    disabled={deleting === bot.id}
+                    className="text-xs px-3 py-1.5 bg-red-600/20 hover:bg-red-600 border border-red-600/40 text-red-400 hover:text-white rounded-lg transition disabled:opacity-50">
+                    {deleting === bot.id ? '...' : '🗑 Excluir'}
+                  </button>
                 </div>
               </div>
             ))}
