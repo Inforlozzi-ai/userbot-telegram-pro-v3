@@ -1,9 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
-import Docker from 'dockerode';
+import { InjectRepository } from '@nestjs/typeorm';
+import * as Dockerode from 'dockerode';
 
 @Injectable()
 export class ProvisionerService {
-  private docker = new Docker({ socketPath: '/var/run/docker.sock' });
+  private docker = new Dockerode({ socketPath: '/var/run/docker.sock' });
   private logger = new Logger('ProvisionerService');
 
   async provision(botId: string): Promise<string> {
