@@ -11,16 +11,24 @@ export class ProvisionerService {
     const image = process.env.DOCKER_IMAGE || 'inforlozzi/userbot-v3:latest';
     this.logger.log(`Provisionando container para bot ${bot.id} (${bot.name})...`);
 
+    // Remove container antigo se existir
+    try {
+      const old = this.docker.getContainer(`bot-${bot.id}`);
+      await old.stop().catch(() => {});
+      await old.remove({ force: true }).catch(() => {});
+    } catch {}
+
     const container = await this.docker.createContainer({
       Image: image,
       name: `bot-${bot.id}`,
       Env: [
         `BOT_ID=${bot.id}`,
         `BOT_NAME=${bot.name}`,
-        `BOT_TOKEN=${bot.botToken}`,
-        `PHONE_NUMBER=${bot.phoneNumber}`,
-        `API_ID=${bot.apiId}`,
-        `API_HASH=${bot.apiHash}`,
+        `BOT_TOKEN=${bot.botToken || ''}`,
+        `PHONE_NUMBER=${bot.phoneNumber || ''}`,
+        `API_ID=${bot.apiId || ''}`,
+        `API_HASH=${bot.apiHash || ''}`,
+        `SESSION_STRING=${bot.sessionString || ''}`,
         `API_URL=http://api:3001`,
         `DATABASE_URL=${process.env.DATABASE_URL}`,
       ],
@@ -32,10 +40,7 @@ export class ProvisionerService {
 
     await container.start();
     const info = await container.inspect();
-    const containerId = info.Id;
-
-    // Atualiza status e containerId no banco via import circular evitado com update direto
-    return containerId;
+    return info.Id;
   }
 
   async start(containerId: string): Promise<void> {
@@ -58,7 +63,7 @@ export class ProvisionerService {
   }
 
   async getLogs(containerId: string): Promise<string> {
-    if (!containerId) return 'Container ainda não provisionado.';
+    if (!containerId) return 'Container ainda nao provisionado.';
     try {
       const c = this.docker.getContainer(containerId);
       const stream = await c.logs({ stdout: true, stderr: true, tail: 100 });

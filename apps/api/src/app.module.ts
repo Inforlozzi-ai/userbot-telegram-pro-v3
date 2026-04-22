@@ -8,6 +8,7 @@ import { BillingModule } from './billing/billing.module';
 import { UsersModule } from './users/users.module';
 import { ResellersModule } from './reseller/reseller.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { TelegramAuthModule } from './telegram-auth/telegram-auth.module';
 import { User } from './users/user.entity';
 import { Bot } from './bots/bot.entity';
 
@@ -28,6 +29,7 @@ import { Bot } from './bots/bot.entity';
     BillingModule,
     ResellersModule,
     NotificationsModule,
+    TelegramAuthModule,
   ],
 })
 export class AppModule {}
