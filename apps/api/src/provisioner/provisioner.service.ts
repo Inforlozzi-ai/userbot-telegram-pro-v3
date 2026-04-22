@@ -2,6 +2,17 @@ import { Injectable, Logger } from '@nestjs/common';
 import * as Dockerode from 'dockerode';
 import { Bot } from '../bots/bot.entity';
 
+const PROMPT_IMAGEM = (
+  'banner de futebol, filme ou serie de TV. Inclui escudos de times, ' +
+  'cartazes de filmes, capas de series, jogadores, estadios ou qualquer ' +
+  'imagem relacionada a esporte futebol, cinema ou streaming.'
+);
+
+const PROMPT_TEXTO = (
+  'A mensagem a seguir e sobre futebol, filmes ou series de TV? ' +
+  'Responda apenas SIM ou NAO.\n\nMensagem: {texto}'
+);
+
 @Injectable()
 export class ProvisionerService {
   private docker = new Dockerode({ socketPath: '/var/run/docker.sock' });
@@ -18,20 +29,33 @@ export class ProvisionerService {
       await old.remove({ force: true }).catch(() => {});
     } catch {}
 
+    const filtroAtivo = (bot as any).filtroTemas !== false;
+    const openaiKey  = (bot as any).openaiApiKey || '';
+
+    const env = [
+      `BOT_ID=${bot.id}`,
+      `BOT_NAME=${bot.name}`,
+      `BOT_NOME=${bot.name}`,
+      `BOT_TOKEN=${bot.botToken || ''}`,
+      `PHONE_NUMBER=${bot.phoneNumber || ''}`,
+      `API_ID=${bot.apiId || ''}`,
+      `API_HASH=${bot.apiHash || ''}`,
+      `SESSION_STRING=${bot.sessionString || ''}`,
+      `ADMIN_IDS=${(bot as any).adminIds || ''}`,
+      `OPENAI_API_KEY=${openaiKey}`,
+      `API_URL=http://api:3001`,
+      `DATABASE_URL=${process.env.DATABASE_URL}`,
+      // Filtro IA fixo: futebol, filmes, series
+      `IA_FILTRO_TEMAS_ATIVO=${filtroAtivo ? 'true' : 'false'}`,
+      `IA_IMG_ANALISE_PROMPT=${PROMPT_IMAGEM}`,
+      `IA_TEXTO_FILTRO_PROMPT=${PROMPT_TEXTO}`,
+      `FORWARD_MODE=copy`,
+    ];
+
     const container = await this.docker.createContainer({
       Image: image,
       name: `bot-${bot.id}`,
-      Env: [
-        `BOT_ID=${bot.id}`,
-        `BOT_NAME=${bot.name}`,
-        `BOT_TOKEN=${bot.botToken || ''}`,
-        `PHONE_NUMBER=${bot.phoneNumber || ''}`,
-        `API_ID=${bot.apiId || ''}`,
-        `API_HASH=${bot.apiHash || ''}`,
-        `SESSION_STRING=${bot.sessionString || ''}`,
-        `API_URL=http://api:3001`,
-        `DATABASE_URL=${process.env.DATABASE_URL}`,
-      ],
+      Env: env,
       HostConfig: {
         RestartPolicy: { Name: 'unless-stopped' },
         NetworkMode: 'minha_rede',
