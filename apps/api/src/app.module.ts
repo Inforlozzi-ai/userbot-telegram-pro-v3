@@ -5,6 +5,8 @@ import { AuthModule } from './auth/auth.module';
 import { BotsModule } from './bots/bots.module';
 import { ProvisionerModule } from './provisioner/provisioner.module';
 import { BillingModule } from './billing/billing.module';
+import { ResellerModule } from './reseller/reseller.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -21,10 +23,12 @@ import { BillingModule } from './billing/billing.module';
         port: parseInt(process.env.REDIS_PORT || '6379'),
       },
     }),
+    NotificationsModule,
     AuthModule,
     BotsModule,
     ProvisionerModule,
     BillingModule,
+    ResellerModule,
   ],
 })
 export class AppModule {}
