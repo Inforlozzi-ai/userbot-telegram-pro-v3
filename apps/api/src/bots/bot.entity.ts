@@ -31,7 +31,16 @@ export class Bot {
   sessionString: string;
 
   @Column({ nullable: true })
-  phone: string;
+  phoneNumber: string;
+
+  @Column({ nullable: true })
+  botToken: string;
+
+  @Column({ nullable: true })
+  apiId: string;
+
+  @Column({ nullable: true })
+  apiHash: string;
 
   @Column({ type: 'jsonb', nullable: true })
   config: Record<string, any>;

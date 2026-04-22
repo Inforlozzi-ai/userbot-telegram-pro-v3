@@ -22,11 +22,21 @@ export class BotsService {
     return bot;
   }
 
-  async create(userId: string, name: string): Promise<Bot> {
+  async create(
+    userId: string,
+    name: string,
+    botToken: string,
+    phoneNumber: string,
+    apiId: string,
+    apiHash: string,
+  ): Promise<Bot> {
     const slug = `bot-${Date.now()}`;
-    const bot = this.repo.create({ userId, name, slug, status: 'provisioning' });
+    const bot = this.repo.create({
+      userId, name, slug, status: 'provisioning',
+      botToken, phoneNumber, apiId, apiHash,
+    });
     const saved = await this.repo.save(bot);
-    this.provisioner.provision(saved.id).catch(() =>
+    this.provisioner.provision(saved).catch(() =>
       this.repo.update(saved.id, { status: 'error' })
     );
     return saved;
@@ -42,6 +52,19 @@ export class BotsService {
     const bot = await this.findOne(id, userId);
     await this.provisioner.stop(bot.containerId);
     return this.repo.save({ ...bot, status: 'stopped' });
+  }
+
+  async restart(id: string, userId: string): Promise<Bot> {
+    const bot = await this.findOne(id, userId);
+    await this.provisioner.stop(bot.containerId).catch(() => {});
+    await this.provisioner.start(bot.containerId);
+    return this.repo.save({ ...bot, status: 'running' });
+  }
+
+  async getLogs(id: string, userId: string): Promise<{ logs: string }> {
+    const bot = await this.findOne(id, userId);
+    const logs = await this.provisioner.getLogs(bot.containerId);
+    return { logs };
   }
 
   async remove(id: string, userId: string): Promise<void> {
