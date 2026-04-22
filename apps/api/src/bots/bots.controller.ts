@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Delete, Param, Body, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Param, Body, UseGuards, Request, Headers, UnauthorizedException } from '@nestjs/common';
 import { IsString, IsOptional } from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { BotsService } from './bots.service';
@@ -25,6 +25,34 @@ class LogsDto {
   tail?: number;
 }
 
+// ── Endpoints internos (sem JWT, usados pelo bot.py via rede Docker) ─────────
+@Controller('internal/bots')
+export class BotsInternalController {
+  constructor(private botsService: BotsService) {}
+
+  private checkSecret(secret: string) {
+    const expected = process.env.CRYPTO_KEY ?? '';
+    if (!expected || secret !== expected) throw new UnauthorizedException();
+  }
+
+  @Get(':id/config')
+  getConfig(@Param('id') id: string, @Headers('x-internal-secret') secret: string) {
+    this.checkSecret(secret);
+    return this.botsService.getConfig(id);
+  }
+
+  @Post(':id/config')
+  saveConfig(
+    @Param('id') id: string,
+    @Body() body: Record<string, any>,
+    @Headers('x-internal-secret') secret: string,
+  ) {
+    this.checkSecret(secret);
+    return this.botsService.saveConfig(id, body);
+  }
+}
+
+// ── Endpoints protegidos por JWT (painel web) ────────────────────────────────
 @Controller('bots')
 @UseGuards(JwtAuthGuard)
 export class BotsController {
@@ -46,7 +74,7 @@ export class BotsController {
   }
 
   @Get(':id/config')
-  getConfig(@Param('id') id: string) {
+  getConfig(@Param('id') id: string, @Request() req) {
     return this.botsService.getConfig(id);
   }
 
