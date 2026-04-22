@@ -45,6 +45,16 @@ export class BotsController {
     return this.botsService.getLogs(id, req.user.id);
   }
 
+  @Get(':id/config')
+  getConfig(@Param('id') id: string) {
+    return this.botsService.getConfig(id);
+  }
+
+  @Post(':id/config')
+  saveConfig(@Param('id') id: string, @Body() body: Record<string, any>) {
+    return this.botsService.saveConfig(id, body);
+  }
+
   @Post()
   create(@Body() body: CreateBotDto, @Request() req) {
     return this.botsService.create(

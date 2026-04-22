@@ -22,6 +22,19 @@ export class BotsService {
     return bot;
   }
 
+  async getConfig(id: string): Promise<Record<string, any>> {
+    const bot = await this.repo.findOne({ where: { id } });
+    if (!bot) throw new NotFoundException('Bot não encontrado.');
+    return bot.config ?? {};
+  }
+
+  async saveConfig(id: string, config: Record<string, any>): Promise<{ ok: boolean }> {
+    const bot = await this.repo.findOne({ where: { id } });
+    if (!bot) throw new NotFoundException('Bot não encontrado.');
+    await this.repo.update(id, { config });
+    return { ok: true };
+  }
+
   async create(
     userId: string,
     name: string,
