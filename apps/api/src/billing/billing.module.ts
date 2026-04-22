@@ -1,19 +1,14 @@
 import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
 import { AsaasService } from './asaas.service';
 import { UpgradeController } from './upgrade.controller';
-import { AsaasWebhookController } from './webhooks/asaas.webhook';
-import { ResellerClient } from '../reseller/reseller-client.entity';
-import { ResellerModule } from '../reseller/reseller.module';
-import { NotificationsModule } from '../notifications/notifications.module';
+import { BillingWebhookController } from './billing-webhook.controller';
+import { AuthModule } from '../auth/auth.module';
+import { UsersModule } from '../users/users.module';
 
 @Module({
-  imports: [
-    TypeOrmModule.forFeature([ResellerClient]),
-    ResellerModule,
-    NotificationsModule,
-  ],
+  imports: [AuthModule, UsersModule],
   providers: [AsaasService],
-  controllers: [UpgradeController, AsaasWebhookController],
+  controllers: [UpgradeController, BillingWebhookController],
+  exports: [AsaasService],
 })
 export class BillingModule {}

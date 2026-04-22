@@ -1,57 +1,26 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, UseGuards, Request } from '@nestjs/common';
-import { ResellerService } from './reseller.service';
+import { Controller, Get, Put, Body, UseGuards, Request } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { ResellersService } from './reseller.service';
 
-@Controller('reseller')
+@Controller('api/reseller')
 @UseGuards(JwtAuthGuard)
-export class ResellerController {
-  constructor(private readonly resellerService: ResellerService) {}
+export class ResellersController {
+  constructor(private resellersService: ResellersService) {}
 
-  // POST /api/reseller — criar painel reseller
-  @Post()
-  create(@Request() req, @Body() dto: any) {
-    return this.resellerService.create(req.user.id, dto);
-  }
-
-  // GET /api/reseller — obter painel do dono
   @Get()
   get(@Request() req) {
-    return this.resellerService.getByOwner(req.user.id);
+    return this.resellersService.getOrCreate(req.user.id);
   }
 
-  // PATCH /api/reseller — atualizar configurações
-  @Patch()
-  update(@Request() req, @Body() dto: any) {
-    return this.resellerService.update(req.user.id, dto);
-  }
-
-  // GET /api/reseller/dashboard — resumo financeiro
-  @Get('dashboard')
-  dashboard(@Request() req) {
-    return this.resellerService.getDashboard(req.user.id);
-  }
-
-  // GET /api/reseller/clients — listar clientes
   @Get('clients')
-  listClients(@Request() req) {
-    return this.resellerService.listClients(req.user.id);
+  clients(@Request() req) {
+    return this.resellersService.getOrCreate(req.user.id).then(r =>
+      this.resellersService.getClients(r.id)
+    );
   }
 
-  // POST /api/reseller/clients — adicionar cliente
-  @Post('clients')
-  addClient(@Request() req, @Body() dto: any) {
-    return this.resellerService.addClient(req.user.id, dto);
-  }
-
-  // DELETE /api/reseller/clients/:id — inativar cliente
-  @Delete('clients/:id')
-  removeClient(@Request() req, @Param('id') id: string) {
-    return this.resellerService.removeClient(req.user.id, id);
-  }
-
-  // GET /api/reseller/commissions — histórico de comissões
-  @Get('commissions')
-  commissions(@Request() req) {
-    return this.resellerService.listCommissions(req.user.id);
+  @Put()
+  update(@Body() body: any, @Request() req) {
+    return this.resellersService.update(req.user.id, body);
   }
 }

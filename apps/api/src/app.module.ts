@@ -1,34 +1,33 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { BullModule } from '@nestjs/bull';
 import { AuthModule } from './auth/auth.module';
 import { BotsModule } from './bots/bots.module';
 import { ProvisionerModule } from './provisioner/provisioner.module';
 import { BillingModule } from './billing/billing.module';
-import { ResellerModule } from './reseller/reseller.module';
+import { UsersModule } from './users/users.module';
+import { ResellersModule } from './reseller/reseller.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { User } from './users/user.entity';
+import { Bot } from './bots/bot.entity';
 
 @Module({
   imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
     TypeOrmModule.forRoot({
       type: 'postgres',
       url: process.env.DATABASE_URL,
-      entities: [__dirname + '/**/*.entity{.ts,.js}'],
-      synchronize: false,
-      autoLoadEntities: true,
+      entities: [User, Bot],
+      synchronize: true,
+      ssl: false,
     }),
-    BullModule.forRoot({
-      redis: {
-        host: process.env.REDIS_HOST || 'redis',
-        port: parseInt(process.env.REDIS_PORT || '6379'),
-      },
-    }),
-    NotificationsModule,
+    UsersModule,
     AuthModule,
     BotsModule,
     ProvisionerModule,
     BillingModule,
-    ResellerModule,
+    ResellersModule,
+    NotificationsModule,
   ],
 })
 export class AppModule {}

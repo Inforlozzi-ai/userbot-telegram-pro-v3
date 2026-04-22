@@ -2,15 +2,15 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Reseller } from './reseller.entity';
 import { ResellerClient } from './reseller-client.entity';
-import { Commission } from './commission.entity';
 import { User } from '../users/user.entity';
-import { ResellerService } from './reseller.service';
-import { ResellerController } from './reseller.controller';
+import { ResellersService } from './reseller.service';
+import { ResellersController } from './reseller.controller';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Reseller, ResellerClient, Commission, User])],
-  providers: [ResellerService],
-  controllers: [ResellerController],
-  exports: [ResellerService],
+  imports: [TypeOrmModule.forFeature([Reseller, ResellerClient, User]), AuthModule],
+  providers: [ResellersService],
+  controllers: [ResellersController],
+  exports: [ResellersService],
 })
-export class ResellerModule {}
+export class ResellersModule {}

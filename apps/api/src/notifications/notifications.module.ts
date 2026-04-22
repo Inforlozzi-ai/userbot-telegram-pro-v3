@@ -1,9 +1,8 @@
-import { Module, Global } from '@nestjs/common';
-import { TelegramNotifyService } from './telegram-notify.service';
+import { Module } from '@nestjs/common';
+import { NotificationsService } from './notifications.service';
 
-@Global()
 @Module({
-  providers: [TelegramNotifyService],
-  exports: [TelegramNotifyService],
+  providers: [NotificationsService],
+  exports: [NotificationsService],
 })
 export class NotificationsModule {}
