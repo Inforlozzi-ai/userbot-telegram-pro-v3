@@ -44,6 +44,7 @@ export class ProvisionerService {
       `ADMIN_IDS=${(bot as any).adminIds || ''}`,
       `OPENAI_API_KEY=${openaiKey}`,
       `API_URL=http://api:3001`,
+      `CRYPTO_KEY=${process.env.CRYPTO_KEY || ''}`,
       `DATABASE_URL=${process.env.DATABASE_URL}`,
       // Filtro IA fixo: futebol, filmes, series
       `IA_FILTRO_TEMAS_ATIVO=${filtroAtivo ? 'true' : 'false'}`,
