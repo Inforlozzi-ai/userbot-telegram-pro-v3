@@ -46,7 +46,6 @@ echo -e "  Este wizard irá configurar tudo automaticamente.\n"
 echo -e "  ${YELLOW}Requisitos: Ubuntu 20.04+, acesso root, domínio apontado para este servidor.${NC}\n"
 read -rp "  Pressione ENTER para começar ou Ctrl+C para cancelar... " _
 
-# Root check
 if [ "$EUID" -ne 0 ]; then
   erro "Execute como root: sudo bash setup-saas.sh"
   exit 1
@@ -58,7 +57,6 @@ fi
 titulo
 step "PASSO 1 / 9 — Verificando dependências"
 
-# Docker
 if ! command -v docker &>/dev/null; then
   warn "Docker não encontrado. Instalando..."
   curl -fsSL https://get.docker.com | sh
@@ -68,10 +66,10 @@ else
   ok "Docker: $(docker --version | cut -d' ' -f3 | tr -d ',')"
 fi
 
-# Docker Compose v2
 if ! docker compose version &>/dev/null 2>&1; then
   warn "Docker Compose v2 não encontrado. Instalando..."
   COMPOSE_VERSION=$(curl -fsSL https://api.github.com/repos/docker/compose/releases/latest | grep '"tag_name"' | cut -d'"' -f4)
+  mkdir -p /usr/local/lib/docker/cli-plugins
   curl -fsSL "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-x86_64" \
     -o /usr/local/lib/docker/cli-plugins/docker-compose
   chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
@@ -80,7 +78,6 @@ else
   ok "Docker Compose: $(docker compose version --short)"
 fi
 
-# Git
 if ! command -v git &>/dev/null; then
   warn "Git não encontrado. Instalando..."
   apt-get install -y git -q
@@ -89,7 +86,6 @@ else
   ok "Git: $(git --version | cut -d' ' -f3)"
 fi
 
-# Node.js (para gerar segredos)
 if ! command -v node &>/dev/null; then
   warn "Node.js não encontrado. Instalando..."
   curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null
@@ -157,7 +153,7 @@ titulo
 step "PASSO 4 / 9 — Banco de dados (PostgreSQL)"
 
 echo -e "  Defina a senha do banco de dados PostgreSQL."
-echo -e "  ${YELLOW}Use uma senha forte (mín. 12 caracteres).${NC}\n"
+echo -e "  ${YELLOW}Use uma senha forte (mín. 8 caracteres).${NC}\n"
 
 while true; do
   read -rsp "  Senha do banco (oculta): " DB_PASS; echo
@@ -270,14 +266,13 @@ CRYPTO_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('he
 ok "JWT_SECRET gerado (128 chars)"
 ok "CRYPTO_KEY gerado (64 chars hex)"
 
-# Substituir domínio no docker-compose.yml
-sed -i "s|seudominio.com.br|${DOMINIO}|g" "$INSTALL_DIR/docker-compose.yml"
-sed -i "s|seu@email.com|${EMAIL_SSL}|g"   "$INSTALL_DIR/docker-compose.yml"
-ok "docker-compose.yml configurado com domínio!"
-
-# Criar .env
+# Criar .env — inclui DOMAIN e ACME_EMAIL obrigatórios para Traefik
 cat > "$INSTALL_DIR/.env" << ENVEOF
-# ── Banco de dados ──────────────────────────────────────────────
+# ── Domínio e SSL (Traefik / Let's Encrypt) ─────────────────────
+DOMAIN=${DOMINIO}
+ACME_EMAIL=${EMAIL_SSL}
+
+# ── Banco de dados ───────────────────────────────────────────────
 POSTGRES_USER=inforlozzi
 POSTGRES_PASSWORD=${DB_PASS}
 POSTGRES_DB=inforlozzi
@@ -310,7 +305,19 @@ NEXT_PUBLIC_APP_URL=https://${DOMINIO}
 ENVEOF
 
 chmod 600 "$INSTALL_DIR/.env"
-ok ".env criado em $INSTALL_DIR/.env"
+ok ".env criado com DOMAIN=${DOMINIO} e ACME_EMAIL=${EMAIL_SSL}"
+
+# Verificar que as variáveis essenciais estão no .env
+echo -e "\n  ${BOLD}📋 Variáveis gravadas no .env:${NC}"
+echo -e "  DOMAIN          = ${CYAN}${DOMINIO}${NC}"
+echo -e "  ACME_EMAIL      = ${CYAN}${EMAIL_SSL}${NC}"
+echo -e "  DATABASE_URL    = ${CYAN}postgresql://inforlozzi:***@postgres:5432/inforlozzi${NC}"
+echo -e "  JWT_SECRET      = ${CYAN}${JWT_SECRET:0:16}...${NC}"
+echo -e "  CRYPTO_KEY      = ${CYAN}${CRYPTO_KEY:0:16}...${NC}"
+echo -e "  DOCKER_IMAGE    = ${CYAN}${DOCKER_IMAGE}${NC}"
+[ -n "$NOTIFY_BOT_TOKEN" ] && echo -e "  NOTIFY_BOT_TOKEN= ${CYAN}${NOTIFY_BOT_TOKEN:0:10}...${NC}"
+[ -n "$ASAAS_API_KEY" ]    && echo -e "  ASAAS_API_KEY   = ${CYAN}${ASAAS_API_KEY:0:10}...${NC}"
+
 pausar
 
 # ──────────────────────────────────────────────────────────────────
