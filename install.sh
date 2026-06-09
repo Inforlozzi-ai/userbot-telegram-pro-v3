@@ -74,19 +74,15 @@ if [ -z "$CRYPTO_KEY" ]; then
   info "Crypto Key gerada."
 fi
 
-read -rp "$(echo -e ${BOLD})Imagem Docker do bot [padrão: inforlozzi/userbot-v3:latest]: $(echo -e ${NC})" DOCKER_IMAGE
-[ -z "$DOCKER_IMAGE" ] && DOCKER_IMAGE="inforlozzi/userbot-v3:latest"
-
 INSTALL_DIR="/opt/userbot-saas"
 read -rp "$(echo -e ${BOLD})Diretório de instalação [padrão: $INSTALL_DIR]: $(echo -e ${NC})" CUSTOM_DIR
 [ -n "$CUSTOM_DIR" ] && INSTALL_DIR="$CUSTOM_DIR"
 
 echo ""
 info "Configurações coletadas:"
-echo -e "  Domínio     : ${BOLD}$DOMAIN${NC}"
-echo -e "  E-mail      : ${BOLD}$LETSENCRYPT_EMAIL${NC}"
-echo -e "  Diretório   : ${BOLD}$INSTALL_DIR${NC}"
-echo -e "  Docker Image: ${BOLD}$DOCKER_IMAGE${NC}"
+echo -e "  Domínio   : ${BOLD}$DOMAIN${NC}"
+echo -e "  E-mail    : ${BOLD}$LETSENCRYPT_EMAIL${NC}"
+echo -e "  Diretório : ${BOLD}$INSTALL_DIR${NC}"
 echo ""
 read -rp "Confirmar e prosseguir? [s/N]: " CONFIRM
 [[ ! "$CONFIRM" =~ ^[Ss]$ ]] && err "Instalação cancelada."
@@ -198,6 +194,9 @@ ok "Repositório pronto em $INSTALL_DIR"
 step "6/8 — Gerando arquivo .env"
 # ═══════════════════════════════════════════════════════════════════
 
+# Nome da imagem buildada localmente
+DOCKER_IMAGE="inforlozzi/userbot-v3:latest"
+
 cat > "$INSTALL_DIR/.env" << ENV_EOF
 # ── Gerado automaticamente pelo install.sh ──────────────────────────
 # Data: $(date '+%Y-%m-%d %H:%M:%S')
@@ -232,15 +231,21 @@ ENV_EOF
 ok ".env gerado em $INSTALL_DIR/.env"
 
 # ═══════════════════════════════════════════════════════════════════
-step "7/8 — Build e deploy dos containers"
+step "7/8 — Build local e deploy dos containers"
 # ═══════════════════════════════════════════════════════════════════
 
 cd "$INSTALL_DIR"
 
-info "Fazendo pull da imagem do bot..."
-docker pull "$DOCKER_IMAGE" 2>/dev/null || warn "Não foi possível fazer pull de $DOCKER_IMAGE (será feito no primeiro deploy)"
+# Build da imagem do bot a partir do Dockerfile local (sem Docker Hub)
+if [ -f "Dockerfile" ]; then
+  info "Buildando imagem do bot localmente: $DOCKER_IMAGE ..."
+  docker build -t "$DOCKER_IMAGE" .
+  ok "Imagem $DOCKER_IMAGE buildada com sucesso"
+else
+  warn "Dockerfile não encontrado na raiz. O docker compose fará o build automaticamente."
+fi
 
-info "Fazendo build e subindo containers..."
+info "Buildando e subindo todos os containers..."
 docker compose up -d --build
 
 info "Aguardando containers iniciarem (30s)..."
@@ -250,14 +255,11 @@ sleep 30
 step "8/8 — Verificação final"
 # ═══════════════════════════════════════════════════════════════════
 
-ERROS=0
-
 for container in inforlozzi-saas-api-1 inforlozzi-saas-web-1 inforlozzi-saas-postgres-1 inforlozzi-saas-redis-1; do
   if docker ps | grep -q "$container"; then
     ok "$container está rodando"
   else
     warn "$container NÃO está rodando"
-    ERRROS=$((ERRROS + 1))
   fi
 done
 
