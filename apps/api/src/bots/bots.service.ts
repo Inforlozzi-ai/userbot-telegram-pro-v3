@@ -49,14 +49,27 @@ export class BotsService {
       botToken, phoneNumber, apiId, apiHash,
     });
     const saved = await this.repo.save(bot);
-    this.provisioner.provision(saved).catch(() =>
-      this.repo.update(saved.id, { status: 'error' })
-    );
+
+    // Só provisiona se já tiver sessionString.
+    // Sem sessão, aguarda o fluxo de auth (telegram-auth.service.ts).
+    if (saved.sessionString) {
+      this.provisioner.provision(saved).then(async (containerId) => {
+        await this.repo.update(saved.id, { containerId, status: 'running' });
+      }).catch(async () => {
+        await this.repo.update(saved.id, { status: 'error' });
+      });
+    }
+
     return saved;
   }
 
   async start(id: string, userId: string): Promise<Bot> {
     const bot = await this.findOne(id, userId);
+    // Sem container mas com sessão = re-provisiona do zero
+    if (!bot.containerId && bot.sessionString) {
+      const containerId = await this.provisioner.provision(bot);
+      return this.repo.save({ ...bot, containerId, status: 'running' });
+    }
     await this.provisioner.start(bot.containerId);
     return this.repo.save({ ...bot, status: 'running' });
   }
@@ -69,6 +82,11 @@ export class BotsService {
 
   async restart(id: string, userId: string): Promise<Bot> {
     const bot = await this.findOne(id, userId);
+    // Sem container mas com sessão = provisiona do zero
+    if (!bot.containerId && bot.sessionString) {
+      const containerId = await this.provisioner.provision(bot);
+      return this.repo.save({ ...bot, containerId, status: 'running' });
+    }
     await this.provisioner.stop(bot.containerId).catch(() => {});
     await this.provisioner.start(bot.containerId);
     return this.repo.save({ ...bot, status: 'running' });
