@@ -17,7 +17,7 @@
 - [Instalação Manual](#instalação-manual)
 - [Variáveis de Ambiente](#variáveis-de-ambiente)
 - [Como Usar o Painel](#como-usar-o-painel)
-- [Comandos Úteis](#comandos-úteis)
+- [Comandos Úties](#comandos-úteis)
 - [Troubleshooting](#troubleshooting)
 
 ---
@@ -77,7 +77,7 @@ O **UserBot Telegram Pro v3** é um SaaS completo que permite:
 | Cache/Filas | Redis 7 |
 | Bot Telegram | Python 3.12 + Telethon |
 | Infra | Docker + Docker Compose + Traefik |
-| Reverse Proxy | Traefik v2.11 (HTTPS Let's Encrypt) |
+| Reverse Proxy | Traefik v2.11 (HTTPS Let’s Encrypt) |
 
 ---
 
@@ -93,19 +93,43 @@ O **UserBot Telegram Pro v3** é um SaaS completo que permite:
 
 ## 🚀 Instalação Rápida
 
-> **1 único comando** — faz tudo automaticamente:
+### ⚠️ Importante: como rodar corretamente
+
+O script de instalação **deve ser executado via `curl`** a partir de um diretório neutro (ex: `/root` ou `/home/usuario`). **Não rode de dentro de um diretório já clonado** — isso causa o erro:
+
+```
+fatal: protocol '/root/userbot-telegram-pro-v3/https' is not supported
+```
+
+### Opção 1 — Servidor limpo (recomendado)
 
 ```bash
+# Certifique-se de estar na home do usuário
+cd ~
 bash <(curl -fsSL https://raw.githubusercontent.com/Inforlozzi-ai/userbot-telegram-pro-v3/main/install.sh)
 ```
 
+### Opção 2 — Já clonou o repositório manualmente
+
+```bash
+# Vá para fora do diretório clonado e rode o script local
+cd ~
+bash ~/userbot-telegram-pro-v3/install.sh
+
+# Ou pelo caminho completo:
+bash /root/userbot-telegram-pro-v3/install.sh
+```
+
+O script detecta que o diretório já existe e faz `git pull` em vez de clonar novamente.
+
 O script vai:
 1. Instalar Docker e Docker Compose (se não tiver)
-2. Clonar o repositório
+2. Clonar o repositório (ou atualizar se já existir)
 3. Perguntar seus dados (domínio, senhas, etc.)
 4. Gerar o `.env` automaticamente
-5. Fazer build e subir todos os containers
-6. Configurar Traefik com HTTPS automático
+5. Fazer **build local** da imagem do bot a partir do `Dockerfile`
+6. Subir todos os containers
+7. Configurar Traefik com HTTPS automático
 
 ---
 
@@ -137,13 +161,19 @@ docker network ls | grep minha_rede
 docker network create minha_rede
 ```
 
-### 4. Build e subir os containers
+### 4. Build local da imagem do bot
+
+```bash
+docker build -t inforlozzi/userbot-v3:latest .
+```
+
+### 5. Build e subir os containers
 
 ```bash
 docker compose up -d --build
 ```
 
-### 5. Verificar se está tudo rodando
+### 6. Verificar se está tudo rodando
 
 ```bash
 docker compose ps
@@ -158,7 +188,7 @@ inforlozzi-saas-postgres-1  Up (healthy)
 inforlozzi-saas-redis-1     Up
 ```
 
-### 6. Criar primeiro usuário admin
+### 7. Criar primeiro usuário admin
 
 ```bash
 # Acessar o container da API
@@ -180,26 +210,24 @@ curl -X POST https://seudominio.com/api/auth/register \
 Copie o `.env.example` e preencha:
 
 ```env
-# ── Domínio ───────────────────────────────────────────
+# ── Domínio ──────────────────────────────────────────────────
 DOMAIN=painel.seudominio.com
 
-# ── Banco de dados ────────────────────────────────────
+# ── Banco de dados ───────────────────────────────────────────
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=senha_forte_aqui
 POSTGRES_DB=userbot_saas
 DATABASE_URL=postgresql://postgres:senha_forte_aqui@postgres:5432/userbot_saas
 
-# ── JWT / Auth ────────────────────────────────────────
+# ── JWT / Auth ───────────────────────────────────────────────
 JWT_SECRET=chave_jwt_super_secreta_min32chars
 CRYPTO_KEY=chave_crypto_para_auth_interna
 
-# ── Redis ─────────────────────────────────────────────
+# ── Redis ─────────────────────────────────────────────────────
 REDIS_URL=redis://redis:6379
 
-# ── Imagem Docker dos bots filhos ────────────────────
+# ── Docker ──────────────────────────────────────────────────
 DOCKER_IMAGE=inforlozzi/userbot-v3:latest
-
-# ── Rede Docker do Traefik ───────────────────────────
 TRAEFIK_NETWORK=minha_rede
 ```
 
@@ -256,7 +284,7 @@ Após o bot estar rodando, abra o chat com o bot no Telegram:
 
 ---
 
-## 🛠️ Comandos Úteis
+## 🛠️ Comandos Úties
 
 ### Gerenciar containers
 
@@ -305,6 +333,19 @@ docker compose up -d --build
 
 ## 🔍 Troubleshooting
 
+### Erro: `fatal: protocol '.../https' is not supported`
+
+Esse erro acontece quando o script é executado de dentro do diretório já clonado. Solução:
+
+```bash
+# Volte para a home e rode novamente
+cd ~
+bash <(curl -fsSL https://raw.githubusercontent.com/Inforlozzi-ai/userbot-telegram-pro-v3/main/install.sh)
+
+# Ou se já clonou manualmente:
+bash ~/userbot-telegram-pro-v3/install.sh
+```
+
 ### Container da API não sobe
 
 ```bash
@@ -341,6 +382,18 @@ Problemas comuns:
 - `SESSION_STRING` inválida → refazer autenticação pelo painel
 - `API_ID` / `API_HASH` incorretos → verificar em https://my.telegram.org
 - `BOT_TOKEN` expirado → gerar novo no @BotFather
+
+### Container ID vazio / logs “Container ainda não provisionado”
+
+Isso significa que o bot foi criado mas o container nunca subiu. Solução:
+
+1. Certifique-se de que a sessão Telegram está **Autenticada** no painel
+2. Clique em **Reiniciar** no painel — o sistema vai provisionar o container automaticamente
+3. Se persistir, verifique os logs da API:
+
+```bash
+docker logs -f inforlozzi-saas-api-1 | grep -i error
+```
 
 ### Erro de autenticação interna (CRYPTO_KEY)
 
