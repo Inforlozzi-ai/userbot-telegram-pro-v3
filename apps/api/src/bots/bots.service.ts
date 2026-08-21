@@ -1,15 +1,42 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Bot } from './bot.entity';
 import { ProvisionerService } from '../provisioner/provisioner.service';
 
 @Injectable()
-export class BotsService {
+export class BotsService implements OnModuleInit {
+  private readonly logger = new Logger('BotsService');
+
   constructor(
     @InjectRepository(Bot) private repo: Repository<Bot>,
     private provisioner: ProvisionerService,
   ) {}
+
+  async onModuleInit(): Promise<void> {
+    const pending = await this.repo.find({ where: { status: 'provisioning' } });
+    if (!pending.length) return;
+
+    this.logger.log(`Encontrados ${pending.length} bot(s) em provisioning para recuperação.`);
+
+    for (const bot of pending) {
+      if (!bot.sessionString) {
+        this.logger.log(`Bot ${bot.id} ainda não possui sessionString; aguardando autenticação.`);
+        continue;
+      }
+
+      try {
+        await this.repo.update(bot.id, { containerId: null, status: 'provisioning' });
+        const containerId = await this.provisioner.provision(bot);
+        await this.repo.update(bot.id, { containerId, status: 'running' });
+        this.logger.log(`Bot ${bot.id} recuperado com sucesso.`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(`Falha ao recuperar bot ${bot.id}: ${message}`);
+        await this.repo.update(bot.id, { status: 'error', containerId: null });
+      }
+    }
+  }
 
   async findByUser(userId: string): Promise<Bot[]> {
     return this.repo.find({ where: { userId }, order: { createdAt: 'DESC' } });
@@ -65,7 +92,6 @@ export class BotsService {
 
   async start(id: string, userId: string): Promise<Bot> {
     const bot = await this.findOne(id, userId);
-    // Sem container mas com sessão = re-provisiona do zero
     if (!bot.containerId && bot.sessionString) {
       const containerId = await this.provisioner.provision(bot);
       return this.repo.save({ ...bot, containerId, status: 'running' });
@@ -82,7 +108,6 @@ export class BotsService {
 
   async restart(id: string, userId: string): Promise<Bot> {
     const bot = await this.findOne(id, userId);
-    // Sem container mas com sessão = provisiona do zero
     if (!bot.containerId && bot.sessionString) {
       const containerId = await this.provisioner.provision(bot);
       return this.repo.save({ ...bot, containerId, status: 'running' });
