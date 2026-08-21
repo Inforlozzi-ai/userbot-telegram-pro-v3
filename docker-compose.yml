@@ -10,7 +10,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     networks:
-      - minha_rede
+      - userbot_rede
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-inforlozzi}"]
       interval: 10s
@@ -23,7 +23,7 @@ services:
     volumes:
       - redisdata:/data
     networks:
-      - minha_rede
+      - userbot_rede
 
   api:
     build:
@@ -49,10 +49,10 @@ services:
       redis:
         condition: service_started
     networks:
-      - minha_rede
+      - userbot_rede
     labels:
       - traefik.enable=true
-      - traefik.docker.network=minha_rede
+      - traefik.docker.network=userbot_rede
       - traefik.http.routers.inforlozzi-api.rule=Host(`${DOMAIN}`) && (PathPrefix(`/api`) || PathPrefix(`/webhooks`))
       - traefik.http.routers.inforlozzi-api.entrypoints=websecure
       - traefik.http.routers.inforlozzi-api.tls=true
@@ -71,10 +71,10 @@ services:
     depends_on:
       - api
     networks:
-      - minha_rede
+      - userbot_rede
     labels:
       - traefik.enable=true
-      - traefik.docker.network=minha_rede
+      - traefik.docker.network=userbot_rede
       - traefik.http.routers.inforlozzi-web.rule=Host(`${DOMAIN}`)
       - traefik.http.routers.inforlozzi-web.entrypoints=websecure
       - traefik.http.routers.inforlozzi-web.tls=true
@@ -86,5 +86,6 @@ volumes:
   redisdata:
 
 networks:
-  minha_rede:
-    external: true
+  userbot_rede:
+    driver: overlay
+    attachable: true
