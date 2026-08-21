@@ -16,8 +16,10 @@ RUN pip install --no-cache-dir \
     openai \
     google-generativeai
 
-# Copiar o bot
+# Copiar o bot e aplicar correções de compatibilidade antes da execução
 COPY bot.py .
+COPY scripts/patch_reply_keyboard.py /tmp/patch_reply_keyboard.py
+RUN python /tmp/patch_reply_keyboard.py && rm /tmp/patch_reply_keyboard.py
 
 # Variáveis obrigatórias (passadas no docker run)
 ENV API_ID=""
