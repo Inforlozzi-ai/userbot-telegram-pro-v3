@@ -53,13 +53,17 @@ export class ProvisionerService {
       `FORWARD_MODE=copy`,
     ];
 
+    // Todos os containers de bots usam a rede dedicada e attachable criada pelo docker-compose.
+    // Pode ser sobrescrita por BOT_NETWORK, mas nunca volta para a antiga minha_rede.
+    const botNetwork = process.env.BOT_NETWORK || 'userbot_rede';
+
     const container = await this.docker.createContainer({
       Image: image,
       name: `bot-${bot.id}`,
       Env: env,
       HostConfig: {
         RestartPolicy: { Name: 'unless-stopped' },
-        NetworkMode: 'minha_rede',
+        NetworkMode: botNetwork,
       },
     });
 
