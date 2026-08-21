@@ -87,5 +87,5 @@ volumes:
 
 networks:
   userbot_rede:
-    driver: overlay
-    attachable: true
+    name: userbot_rede
+    external: true
