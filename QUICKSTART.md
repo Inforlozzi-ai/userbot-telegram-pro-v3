@@ -1,130 +1,51 @@
-# ⚡ Quick Start — Userbot Telegram PRO v3
+# Quick Start — UserBot Telegram Pro v3
 
-## 📥 Passo 1: Extrair o ZIP
+## VPS nova
 
-```
-userbot-telegram-pro-v3.zip
-    ↓
-Extrair em:
-    C:\Projetos\userbot-telegram-pro
-    ou
-    ~/Projetos/userbot-telegram-pro
-```
-
----
-
-## 🔧 Passo 2: Enviar para GitHub (2 minutos)
-
-### 2.1 - Criar repositório vazio no GitHub
-
-1. Acesse [github.com/new](https://github.com/new)
-2. Digite o nome: `userbot-telegram-pro`
-3. Deixe **vazio** (não marque nada)
-4. Clique **Create repository**
-
-### 2.2 - Copiar o comando que aparece
-
-Você verá algo assim:
+### 1. Aponte o domínio para a VPS
 
 ```bash
-git remote add origin https://github.com/SEU_USER/userbot-telegram-pro.git
-git branch -M main
-git push -u origin main
+curl -4 ifconfig.me ; echo
+dig +short painel.seudominio.com
 ```
 
----
+Os IPs devem ser iguais.
 
-## 💻 Passo 3: Terminal do PC
-
-**Windows: Abra PowerShell**
-```
-Tecle Windows + R
-Digite: powershell
-Enter
-```
-
-**Mac/Linux: Abra Terminal**
-```
-Cmd + Space
-Digite: terminal
-Enter
-```
-
----
-
-## 🚀 Passo 4: Execute (copy & paste)
+### 2. Instale
 
 ```bash
-cd C:\Projetos\userbot-telegram-pro
-
-git init
-git config user.name "Seu Nome"
-git config user.email "seu@email.com"
-git add .
-git commit -m "Initial commit: Userbot Telegram PRO v3 - IA + Inline Mode"
-git branch -M main
-git remote add origin https://github.com/SEU_USER/userbot-telegram-pro.git
-git push -u origin main
+cd ~
+curl -fsSL https://raw.githubusercontent.com/Inforlozzi-ai/userbot-telegram-pro-v3/main/install.sh -o install-userbot.sh
+chmod +x install-userbot.sh
+sudo ./install-userbot.sh
 ```
 
-**Substitua:**
-- `Seu Nome` → Seu nome mesmo
-- `seu@email.com` → Seu email
-- `SEU_USER` → Seu usuário do GitHub
-
----
-
-## ✅ Pronto!
-
-Seu repositório está online em:
-```
-https://github.com/SEU_USER/userbot-telegram-pro
-```
-
----
-
-## 📱 Próximo Passo: Instalar na VPS
-
-Agora na sua VPS, execute:
+### 3. Valide
 
 ```bash
-cd ~ && git clone https://github.com/SEU_USER/userbot-telegram-pro.git
-cd userbot-telegram-pro
-chmod +x install.sh
-sudo bash install.sh
+cd /opt/userbot-saas
+docker compose ps -a
+curl -I https://painel.seudominio.com
 ```
 
----
+Esperado: `api`, `web`, `postgres` e `redis` ativos e HTTPS respondendo `HTTP/2 200`.
 
-## 🆘 Erros Comuns
+## Atualizar instalação existente
 
-### ❌ "command not found: git"
-**Solução:**
-- Windows: Reinstale [git-scm.com](https://git-scm.com)
-- Mac: `brew install git`
-- Linux: `sudo apt install git`
-
-### ❌ "fatal: not a git repository"
-**Solução:** Você não está na pasta certa. Verifique com:
 ```bash
-ls
-# Deve aparecer: bot.py install.sh README.md LICENSE
+cd /opt/userbot-saas
+git pull
+docker compose up -d --build
+docker compose ps
 ```
 
-### ❌ "Permission denied (publickey)"
-**Solução:** Faça login quando a janela pop-up aparecer (primeira vez)
+## Se o SSL falhar
 
----
-
-## 📖 Leitura Completa
-
-Para um guia detalhado, abra:
-```
-UPLOAD_GUIDE.md
+```bash
+dig @1.1.1.1 painel.seudominio.com +short
+curl -4 ifconfig.me ; echo
+TRAEFIK_CONTAINER=$(docker ps --format '{{.Names}}' | grep -i traefik | head -n1)
+docker logs "$TRAEFIK_CONTAINER" --since=20m 2>&1 | grep -Ei 'acme|certificate|error'
 ```
 
-Tem tudo explicado passo a passo!
-
----
-
-**Você consegue! 🎉**
+Guia completo: [INSTALL.md](INSTALL.md).
