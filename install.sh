@@ -182,10 +182,19 @@ TRAEFIK_EOF
 else
   ok "Traefik já está rodando: $TRAEFIK_CONTAINER"
 
-  if ! docker inspect "$TRAEFIK_CONTAINER" --format '{{json .NetworkSettings.Networks}}' | grep -q "\"$TRAEFIK_NETWORK\""; then
+  TRAEFIK_NETWORK_MODE=$(docker inspect "$TRAEFIK_CONTAINER" --format '{{.HostConfig.NetworkMode}}' 2>/dev/null || true)
+
+  if [ "$TRAEFIK_NETWORK_MODE" = "host" ] || [[ "$TRAEFIK_NETWORK_MODE" == container:* ]]; then
+    warn "Traefik usa network_mode '$TRAEFIK_NETWORK_MODE'. O Docker não permite conectá-lo a redes adicionais."
+    info "Mantendo o Traefik como está. A aplicação continuará na rede '$TRAEFIK_NETWORK' e será descoberta pelo provider Docker."
+  elif ! docker inspect "$TRAEFIK_CONTAINER" --format '{{json .NetworkSettings.Networks}}' | grep -q "\"$TRAEFIK_NETWORK\""; then
     info "Conectando Traefik à rede '$TRAEFIK_NETWORK'..."
-    docker network connect "$TRAEFIK_NETWORK" "$TRAEFIK_CONTAINER"
-    ok "Traefik conectado à rede '$TRAEFIK_NETWORK'"
+    if docker network connect "$TRAEFIK_NETWORK" "$TRAEFIK_CONTAINER"; then
+      ok "Traefik conectado à rede '$TRAEFIK_NETWORK'"
+    else
+      warn "Não foi possível conectar o Traefik à rede '$TRAEFIK_NETWORK'. Continuando sem interromper a instalação."
+      warn "Se o domínio não abrir ao final, verificaremos a configuração de rede do Traefik existente."
+    fi
   else
     ok "Traefik já está conectado à rede '$TRAEFIK_NETWORK'"
   fi
