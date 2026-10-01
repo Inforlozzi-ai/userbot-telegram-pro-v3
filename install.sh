@@ -294,13 +294,25 @@ sleep 30
 step "8/8 — Verificação final"
 # ═══════════════════════════════════════════════════════════════════
 
-for container in inforlozzi-saas-api-1 inforlozzi-saas-web-1 inforlozzi-saas-postgres-1 inforlozzi-saas-redis-1; do
-  if docker ps | grep -q "$container"; then
-    ok "$container está rodando"
+SERVICES=(api web postgres redis)
+ALL_RUNNING=true
+
+for service in "${SERVICES[@]}"; do
+  CONTAINER_ID=$(docker compose ps -q "$service" 2>/dev/null || true)
+  if [ -n "$CONTAINER_ID" ] && [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER_ID" 2>/dev/null)" = "true" ]; then
+    CONTAINER_NAME=$(docker inspect -f '{{.Name}}' "$CONTAINER_ID" | sed 's#^/##')
+    ok "$service está rodando ($CONTAINER_NAME)"
   else
-    warn "$container NÃO está rodando"
+    warn "$service NÃO está rodando"
+    ALL_RUNNING=false
   fi
 done
+
+if [ "$ALL_RUNNING" = true ]; then
+  ok "Todos os serviços principais estão rodando"
+else
+  warn "Um ou mais serviços não estão rodando. Execute: cd $INSTALL_DIR && docker compose ps -a"
+fi
 
 # Salvar credenciais
 CREDS_FILE="$INSTALL_DIR/.credentials"
