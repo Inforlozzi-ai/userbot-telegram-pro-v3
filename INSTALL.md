@@ -1,236 +1,227 @@
-# 📋 INSTALL.md — Guia completo de instalação
+# Instalação completa — UserBot Telegram Pro v3
 
-> **Pré-requisitos:** VPS Ubuntu 22.04+, Docker instalado, domínio apontado para o IP da VPS.
+Este guia descreve a instalação validada em VPS Ubuntu com Docker, Docker Compose e Traefik.
 
----
+## 1. Preparar DNS
 
-## 1. Preparar a VPS
-
-```bash
-# Atualizar sistema
-sudo apt update && sudo apt upgrade -y
-
-# Instalar Docker
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER
-newgrp docker
-
-# Verificar
-docker --version
-docker compose version
-```
-
----
-
-## 2. Clonar o repositório
+Descubra o IP público da VPS:
 
 ```bash
-git clone https://github.com/Inforlozzi-ai/userbot-telegram-pro-v3.git inforlozzi-saas
-cd inforlozzi-saas
+curl -4 ifconfig.me ; echo
 ```
 
----
+No provedor DNS, crie um registro A para o painel apontando para esse IP.
 
-## 3. Configurar variáveis de ambiente
+Exemplo:
+
+```text
+Tipo: A
+Host: painel
+Valor: IP_DA_VPS
+```
+
+Evite manter CNAME antigo para o mesmo host.
+
+Valide:
 
 ```bash
-cp .env.example .env
-nano .env
+dig +short painel.seudominio.com
 ```
 
-### 3.1 Gerar segredos obrigatórios
+Se quiser consultar diretamente DNS públicos:
 
 ```bash
-# Precisa do Node.js — instale com:
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
-
-# JWT_SECRET (64 bytes)
-node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
-
-# CRYPTO_KEY (32 bytes = 64 chars hex)
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-
-# ASAAS_WEBHOOK_TOKEN (token aleatório)
-node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"
+dig @1.1.1.1 painel.seudominio.com +short
+dig @8.8.8.8 painel.seudominio.com +short
 ```
 
-### 3.2 Preencher o .env
+## 2. Baixar o instalador
 
-| Variável | Como obter |
-|---|---|
-| `POSTGRES_PASSWORD` | Crie uma senha forte |
-| `JWT_SECRET` | Comando acima |
-| `CRYPTO_KEY` | Comando acima (64 chars) |
-| `ASAAS_API_KEY` | Painel Asaas → API Keys |
-| `ASAAS_WEBHOOK_TOKEN` | Comando acima |
-| `ASAAS_PLAN_*` | Painel Asaas → Planos → ID |
-| `NEXT_PUBLIC_APP_URL` | `https://seudominio.com.br` |
-
----
-
-## 4. Editar domínio no docker-compose.yml
+Entre como root ou use sudo:
 
 ```bash
-# Substituir seudominio.com.br e seu@email.com pelo seus dados reais
-sed -i 's/seudominio.com.br/SEUDOMINIO.COM.BR/g' docker-compose.yml
-sed -i 's/seu@email.com/SEU@EMAIL.COM/g' docker-compose.yml
+cd ~
+curl -fsSL https://raw.githubusercontent.com/Inforlozzi-ai/userbot-telegram-pro-v3/main/install.sh -o install-userbot.sh
+chmod +x install-userbot.sh
 ```
 
----
+## 3. Executar
 
-## 5. Subir a stack completa
+```bash
+sudo ./install-userbot.sh
+```
+
+O instalador solicitará:
+
+- domínio do painel;
+- e-mail do Let's Encrypt;
+- senha PostgreSQL (opcional: Enter para gerar);
+- JWT Secret (opcional: Enter para gerar);
+- Crypto Key (opcional: Enter para gerar);
+- diretório de instalação (padrão `/opt/userbot-saas`).
+
+Use o domínio sem `https://` e sem ponto final.
+
+## 4. Rede Docker
+
+Por padrão:
+
+```text
+minha_rede
+```
+
+Se não existir, será criada automaticamente.
+
+Para escolher outra:
+
+```bash
+TRAEFIK_NETWORK=proxy_publica sudo ./install-userbot.sh
+```
+
+A mesma variável será gravada no `.env` e usada pelo Docker Compose.
+
+## 5. Traefik existente
+
+O instalador procura um container cujo nome contenha `traefik`.
+
+Se não encontrar, instala uma instância Traefik com HTTP/HTTPS e Let's Encrypt.
+
+Se encontrar:
+
+- mantém o Traefik existente;
+- tenta conectá-lo à rede compartilhada quando isso for permitido;
+- se estiver em `network_mode: host`, não tenta forçar `docker network connect`;
+- uma falha de conexão de rede não encerra mais toda a instalação.
+
+## 6. Deploy
+
+O código será instalado em:
+
+```text
+/opt/userbot-saas
+```
+
+O script gera `.env`, builda a imagem do bot e executa:
 
 ```bash
 docker compose up -d --build
 ```
 
-Acompanhar logs:
+## 7. Confirmar serviços
+
+```bash
+cd /opt/userbot-saas
+docker compose ps -a
+```
+
+Devem estar ativos:
+
+- `api`;
+- `web`;
+- `postgres` (healthy);
+- `redis`.
+
+Logs:
+
+```bash
+docker compose logs --tail=100
+```
+
+API:
+
 ```bash
 docker compose logs -f api
+```
+
+Web:
+
+```bash
 docker compose logs -f web
 ```
 
-Verificar status:
+## 8. Testar domínio e SSL
+
 ```bash
+curl -I https://painel.seudominio.com
+```
+
+Resultado esperado:
+
+```text
+HTTP/2 200
+```
+
+Se o certificado estiver incorreto:
+
+```bash
+TRAEFIK_CONTAINER=$(docker ps --format '{{.Names}}' | grep -i traefik | head -n1)
+docker logs "$TRAEFIK_CONTAINER" --since=20m 2>&1 | grep -Ei 'acme|certificate|error|painel.seudominio.com'
+```
+
+Um erro ACME `unauthorized` normalmente significa que o domínio ainda apontava para outro IP durante a validação.
+
+## 9. DNS antigo dentro da própria VPS
+
+Compare:
+
+```bash
+dig @1.1.1.1 painel.seudominio.com +short
+getent ahostsv4 painel.seudominio.com
+```
+
+Se o Cloudflare retornar o IP novo e `getent` retornar o antigo:
+
+```bash
+resolvectl status
+resolvectl dns eth0 1.1.1.1 8.8.8.8
+resolvectl flush-caches
+getent ahostsv4 painel.seudominio.com
+```
+
+## 10. DNS corporativo/local antigo
+
+Se no computador cliente:
+
+```cmd
+nslookup painel.seudominio.com
+```
+
+retornar IP antigo, mas:
+
+```cmd
+nslookup painel.seudominio.com 1.1.1.1
+```
+
+retornar o IP correto, o problema está no DNS local/corporativo, não na VPS.
+
+## 11. Acessar
+
+Abra:
+
+```text
+https://painel.seudominio.com
+```
+
+Depois crie a conta e siga o fluxo do painel.
+
+## 12. Atualizar depois
+
+```bash
+cd /opt/userbot-saas
+git pull
+docker compose up -d --build
 docker compose ps
 ```
 
-Saída esperada:
-```
-NAME       STATUS
-postgres   Up (healthy)
-redis      Up (healthy)
-api        Up
-web        Up
-traefik    Up
-```
-
----
-
-## 6. Executar migrations do banco
+## 13. Backup PostgreSQL
 
 ```bash
-docker compose exec api npm run typeorm migration:run
+cd /opt/userbot-saas
+docker compose exec -T postgres pg_dump -U postgres userbot_saas > backup_$(date +%Y%m%d_%H%M).sql
 ```
 
----
+## 14. Observações
 
-## 7. Configurar webhook Asaas
+A API usa TypeORM com sincronização automática no estado atual do projeto; o script `migration:run` apenas informa que nenhuma migration é necessária.
 
-No painel Asaas → **Configurações → Integrações → Webhooks**:
-
-```
-URL:     https://seudominio.com.br/webhooks/asaas
-Eventos: PAYMENT_RECEIVED, PAYMENT_CONFIRMED, PAYMENT_OVERDUE, SUBSCRIPTION_INACTIVATED
-Token:   (mesmo valor de ASAAS_WEBHOOK_TOKEN no .env)
-```
-
----
-
-## 8. Testar a instalação
-
-```bash
-# Criar conta
-curl -X POST https://seudominio.com.br/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Admin","email":"admin@seudominio.com","password":"minhasenha123"}'
-
-# Login (guarde o access_token retornado)
-curl -X POST https://seudominio.com.br/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"admin@seudominio.com","password":"minhasenha123"}'
-```
-
----
-
-## 9. Acessar o painel
-
-```
-https://seudominio.com.br
-```
-
-1. Clique em **Criar conta**
-2. Faça login
-3. Vá em **Meus Bots → + Novo Bot**
-4. Siga o wizard: Bot → API → Session → Deploy → Pronto ✅
-
----
-
-## 🔧 Comandos do dia a dia
-
-```bash
-# Ver todos os containers (incluindo bots provisionados)
-docker ps -a
-
-# Logs de um bot específico
-docker logs userbot-SLUG --tail=50 -f
-
-# Reiniciar a API sem downtime
-docker compose restart api
-
-# Atualizar após git pull
-git pull && docker compose up -d --build api web
-
-# Backup do banco
-docker compose exec postgres pg_dump -U inforlozzi inforlozzi > backup_$(date +%Y%m%d).sql
-
-# Restaurar backup
-cat backup_YYYYMMDD.sql | docker compose exec -T postgres psql -U inforlozzi inforlozzi
-
-# Escalar workers de provisionamento
-docker compose up -d --scale api=2
-```
-
----
-
-## 🛠 Troubleshooting
-
-| Problema | Solução |
-|---|---|
-| API não conecta no Postgres | Verificar `DATABASE_URL` e se postgres está healthy |
-| Bot não provisiona | Verificar se `/var/run/docker.sock` está montado na API |
-| HTTPS não funciona | `dig +short seudominio.com.br` — IP deve bater com a VPS |
-| Erro `CRYPTO_KEY must be 32 bytes` | A chave deve ter exatamente **64 chars hexadecimais** |
-| Webhook Asaas retorna 401 | `ASAAS_WEBHOOK_TOKEN` no `.env` diferente do cadastrado no Asaas |
-| `migration:run` falha | Verificar se `DATABASE_URL` está correto e postgres está up |
-
----
-
-## 📁 Localização dos arquivos por pacote
-
-```
-# Pacote 3 — Provisionamento
-apps/api/src/provisioner/docker.service.ts
-apps/api/src/provisioner/provisioner.service.ts
-apps/api/src/provisioner/provisioner.worker.ts
-apps/api/src/provisioner/provisioner.module.ts
-apps/api/src/common/crypto.service.ts
-apps/api/src/bots/bot.entity.ts
-apps/api/src/bots/bots.controller.ts
-apps/api/src/billing/webhooks/asaas.webhook.ts
-apps/web/components/onboarding/ConnectionWizard.tsx
-
-# Pacote 4 — Dashboard
-apps/web/components/dashboard/BotStatusCard.tsx
-apps/web/components/dashboard/BotActions.tsx
-apps/web/components/dashboard/BotLogs.tsx
-apps/web/components/dashboard/BotStatsChart.tsx
-apps/web/app/dashboard/bots/page.tsx
-apps/web/app/dashboard/bots/[botId]/page.tsx
-
-# Pacote 5 — Auth + Planos
-apps/api/src/auth/auth.module.ts
-apps/api/src/auth/auth.service.ts
-apps/api/src/auth/auth.controller.ts
-apps/api/src/auth/jwt.strategy.ts
-apps/api/src/auth/jwt-auth.guard.ts
-apps/api/src/guards/plan.guard.ts
-apps/api/src/users/user.entity.ts
-apps/api/src/billing/asaas.service.ts
-apps/api/src/billing/upgrade.controller.ts
-apps/web/app/login/page.tsx
-apps/web/app/register/page.tsx
-apps/web/app/dashboard/upgrade/page.tsx
-apps/web/hooks/useAuth.ts
-```
+As integrações Asaas e notificações Telegram podem ficar sem configuração durante o primeiro deploy. Elas devem ser preenchidas no `.env` antes de usar esses recursos.
