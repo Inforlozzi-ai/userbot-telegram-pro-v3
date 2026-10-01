@@ -52,9 +52,19 @@ step "1/8 — Coletando informações"
 
 read -rp "$(echo -e ${BOLD})Domínio do painel (ex: painel.seusite.com): $(echo -e ${NC})" DOMAIN
 [ -z "$DOMAIN" ] && err "Domínio obrigatório."
+DOMAIN="${DOMAIN%.}"
+DOMAIN="${DOMAIN#http://}"
+DOMAIN="${DOMAIN#https://}"
+DOMAIN="${DOMAIN%%/*}"
+if [[ ! "$DOMAIN" =~ ^([A-Za-z0-9-]+\.)+[A-Za-z]{2,}$ ]]; then
+  err "Domínio inválido: '$DOMAIN'. Informe apenas o domínio, sem https://, barras ou ponto final."
+fi
 
 read -rp "$(echo -e ${BOLD})E-mail para Let's Encrypt (HTTPS): $(echo -e ${NC})" LETSENCRYPT_EMAIL
 [ -z "$LETSENCRYPT_EMAIL" ] && err "E-mail obrigatório."
+if [[ ! "$LETSENCRYPT_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+  err "E-mail inválido: '$LETSENCRYPT_EMAIL'."
+fi
 
 read -rp "$(echo -e ${BOLD})Senha do PostgreSQL [padrão: gerar automático]: $(echo -e ${NC})" PG_PASS
 if [ -z "$PG_PASS" ]; then
@@ -189,11 +199,16 @@ else
     info "Mantendo o Traefik como está. A aplicação continuará na rede '$TRAEFIK_NETWORK' e será descoberta pelo provider Docker."
   elif ! docker inspect "$TRAEFIK_CONTAINER" --format '{{json .NetworkSettings.Networks}}' | grep -q "\"$TRAEFIK_NETWORK\""; then
     info "Conectando Traefik à rede '$TRAEFIK_NETWORK'..."
-    if docker network connect "$TRAEFIK_NETWORK" "$TRAEFIK_CONTAINER"; then
+    set +e
+    NETWORK_CONNECT_OUTPUT=$(docker network connect "$TRAEFIK_NETWORK" "$TRAEFIK_CONTAINER" 2>&1)
+    NETWORK_CONNECT_STATUS=$?
+    set -e
+    if [ "$NETWORK_CONNECT_STATUS" -eq 0 ]; then
       ok "Traefik conectado à rede '$TRAEFIK_NETWORK'"
     else
-      warn "Não foi possível conectar o Traefik à rede '$TRAEFIK_NETWORK'. Continuando sem interromper a instalação."
-      warn "Se o domínio não abrir ao final, verificaremos a configuração de rede do Traefik existente."
+      warn "Não foi possível conectar o Traefik à rede '$TRAEFIK_NETWORK'. Continuando a instalação."
+      warn "$NETWORK_CONNECT_OUTPUT"
+      warn "Se o domínio não abrir ao final, verificaremos a configuração do Traefik existente."
     fi
   else
     ok "Traefik já está conectado à rede '$TRAEFIK_NETWORK'"
