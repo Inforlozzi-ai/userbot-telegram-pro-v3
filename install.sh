@@ -124,15 +124,21 @@ fi
 step "4/8 — Configurando rede Docker (Traefik)"
 # ═══════════════════════════════════════════════════════════════════
 
-if ! docker network ls | grep -q minha_rede; then
-  docker network create minha_rede
-  ok "Rede 'minha_rede' criada"
+# Rede compartilhada entre Traefik e a aplicação.
+# Pode ser sobrescrita antes de executar o instalador:
+# TRAEFIK_NETWORK=outra_rede bash install.sh
+TRAEFIK_NETWORK="${TRAEFIK_NETWORK:-minha_rede}"
+
+if ! docker network inspect "$TRAEFIK_NETWORK" >/dev/null 2>&1; then
+  docker network create "$TRAEFIK_NETWORK"
+  ok "Rede '$TRAEFIK_NETWORK' criada"
 else
-  ok "Rede 'minha_rede' já existe"
+  ok "Rede '$TRAEFIK_NETWORK' já existe"
 fi
 
 # Verificar se Traefik está rodando
-if ! docker ps | grep -q traefik; then
+TRAEFIK_CONTAINER=$(docker ps --format '{{.Names}}' | grep -i 'traefik' | head -n 1 || true)
+if [ -z "$TRAEFIK_CONTAINER" ]; then
   warn "Traefik não encontrado. Subindo Traefik..."
   mkdir -p /opt/traefik
   cat > /opt/traefik/docker-compose.yml << TRAEFIK_EOF
@@ -146,7 +152,7 @@ services:
       - --api.insecure=false
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
-      - --providers.docker.network=minha_rede
+      - --providers.docker.network=$TRAEFIK_NETWORK
       - --entrypoints.web.address=:80
       - --entrypoints.websecure.address=:443
       - --certificatesresolvers.letsencrypt.acme.httpchallenge=true
@@ -162,9 +168,10 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./letsencrypt:/letsencrypt
     networks:
-      - minha_rede
+      - proxy
 networks:
-  minha_rede:
+  proxy:
+    name: $TRAEFIK_NETWORK
     external: true
 TRAEFIK_EOF
   mkdir -p /opt/traefik/letsencrypt
@@ -173,7 +180,15 @@ TRAEFIK_EOF
   cd /opt/traefik && docker compose up -d
   ok "Traefik iniciado"
 else
-  ok "Traefik já está rodando"
+  ok "Traefik já está rodando: $TRAEFIK_CONTAINER"
+
+  if ! docker inspect "$TRAEFIK_CONTAINER" --format '{{json .NetworkSettings.Networks}}' | grep -q "\"$TRAEFIK_NETWORK\""; then
+    info "Conectando Traefik à rede '$TRAEFIK_NETWORK'..."
+    docker network connect "$TRAEFIK_NETWORK" "$TRAEFIK_CONTAINER"
+    ok "Traefik conectado à rede '$TRAEFIK_NETWORK'"
+  else
+    ok "Traefik já está conectado à rede '$TRAEFIK_NETWORK'"
+  fi
 fi
 
 # ═══════════════════════════════════════════════════════════════════
@@ -220,7 +235,7 @@ CRYPTO_KEY=$CRYPTO_KEY
 
 # Docker
 DOCKER_IMAGE=$DOCKER_IMAGE
-TRAEFIK_NETWORK=minha_rede
+TRAEFIK_NETWORK=$TRAEFIK_NETWORK
 
 # Next.js
 NEXTAUTH_URL=https://$DOMAIN
