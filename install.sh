@@ -336,9 +336,9 @@ Crypto Key  : $CRYPTO_KEY
 Arquivo .env: $INSTALL_DIR/.env
 
 COMMANDS ÚTEIS:
-  Ver containers : docker ps
-  Logs API       : docker logs -f inforlozzi-saas-api-1
-  Logs Web       : docker logs -f inforlozzi-saas-web-1
+  Ver serviços   : cd $INSTALL_DIR && docker compose ps -a
+  Logs API       : cd $INSTALL_DIR && docker compose logs -f api
+  Logs Web       : cd $INSTALL_DIR && docker compose logs -f web
   Reiniciar      : cd $INSTALL_DIR && docker compose restart
   Atualizar      : cd $INSTALL_DIR && git pull && docker compose up -d --build
 ═══════════════════════════════════════
@@ -365,7 +365,7 @@ echo -e "  3. Autentique a conta Telegram via SMS"
 echo -e "  4. Configure origens, destinos e IA no Telegram"
 echo ""
 echo -e "  Logs em tempo real:"
-echo -e "  ${CYAN}docker logs -f inforlozzi-saas-api-1${NC}"
+echo -e "  ${CYAN}cd $INSTALL_DIR && docker compose logs -f api${NC}"
 echo ""
 echo -e "  Documentação: ${CYAN}https://github.com/Inforlozzi-ai/userbot-telegram-pro-v3${NC}"
 echo ""
